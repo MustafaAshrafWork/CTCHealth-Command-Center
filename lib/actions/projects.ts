@@ -6,16 +6,13 @@ import type { Milestone, Person, Project, ProjectMember } from "@prisma/client";
 import { z } from "zod";
 
 import { db } from "@/lib/db";
-import { dateOnlyUTC, deriveProgress } from "@/lib/health";
-import {
-  parseProjectCsv,
-  resolveProjectCsvPeople,
-} from "@/lib/project-csv";
+import { dateOnlyUTC } from "@/lib/health";
 import { sanitizePerson } from "@/lib/sanitize-person";
 import { requireSession } from "@/lib/session";
 import type { ActionResult } from "@/lib/types";
 import {
   idSchema,
+  projectCreateSchema,
   projectInputSchema,
   projectStatusSchema,
 } from "@/lib/validation";
@@ -29,15 +26,6 @@ export type ProjectWithRelations = Project & {
 };
 
 type ProjectStatus = z.infer<typeof projectStatusSchema>;
-
-export type ProjectCsvImportResult =
-  | { ok: true; data: { count: number } }
-  | {
-      ok: false;
-      code: "VALIDATION" | "UNAUTHORIZED" | "ERROR";
-      error: string;
-      errors: string[];
-    };
 
 const projectVersionRefSchema = z.object({
   id: idSchema,
@@ -79,10 +67,12 @@ function sanitizeProjectResult(
 }
 
 async function assertRealPeople(
-  ownerId: string,
-  memberIds: string[],
+  personIds: string[],
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ids = Array.from(new Set([ownerId, ...memberIds]));
+  const ids = Array.from(new Set(personIds));
+  if (ids.length === 0) {
+    return { ok: true };
+  }
   const people = await db.person.findMany({
     where: { id: { in: ids } },
     select: { id: true, isDemo: true },
@@ -126,7 +116,7 @@ export async function createProject(
     return session;
   }
 
-  const parsed = projectInputSchema.safeParse(input);
+  const parsed = projectCreateSchema.safeParse(input);
   if (!parsed.success) {
     return {
       ok: false,
@@ -136,9 +126,14 @@ export async function createProject(
   }
 
   const { memberIds, startDate, endDate, ...rest } = parsed.data;
-  const uniqueMemberIds = Array.from(new Set(memberIds));
+  // The session user owns every project they create; the owner is never
+  // duplicated into the member list.
+  const ownerId = session.personId;
+  const uniqueMemberIds = Array.from(new Set(memberIds)).filter(
+    (personId) => personId !== ownerId,
+  );
 
-  const peopleCheck = await assertRealPeople(rest.ownerId, uniqueMemberIds);
+  const peopleCheck = await assertRealPeople(uniqueMemberIds);
   if (!peopleCheck.ok) {
     return { ok: false, code: "VALIDATION", error: peopleCheck.error };
   }
@@ -146,6 +141,7 @@ export async function createProject(
   const project = await db.project.create({
     data: {
       ...rest,
+      ownerId,
       progress: 0,
       startDate: dateOnlyUTC(startDate),
       endDate: dateOnlyUTC(endDate),
@@ -161,113 +157,6 @@ export async function createProject(
 
   revalidateProjectRoutes();
   return { ok: true, data: sanitizeProjectResult(project) };
-}
-
-export async function importProjectsCsv(
-  csvText: unknown,
-): Promise<ProjectCsvImportResult> {
-  const session = await requireSessionResult();
-  if (!session.ok) {
-    return { ...session, errors: [session.error] };
-  }
-
-  const MAX_CSV_BYTES = 1_048_576;
-  const textLength = typeof csvText === "string" ? csvText.length : 0;
-  if (textLength > MAX_CSV_BYTES) {
-    const errors = [
-      `CSV file is too large — keep it under 1 MB (received ${textLength} characters).`,
-    ];
-    return {
-      ok: false,
-      code: "VALIDATION",
-      error: "CSV file is too large.",
-      errors,
-    };
-  }
-
-  const parsedText = z.string().min(1).max(MAX_CSV_BYTES).safeParse(csvText);
-  if (!parsedText.success) {
-    const errors = ["Row 1: CSV file is empty or invalid."];
-    return {
-      ok: false,
-      code: "VALIDATION",
-      error: "CSV validation failed.",
-      errors,
-    };
-  }
-
-  const parsedCsv = parseProjectCsv(parsedText.data);
-  if (!parsedCsv.ok) {
-    return {
-      ok: false,
-      code: "VALIDATION",
-      error: "CSV validation failed.",
-      errors: parsedCsv.errors,
-    };
-  }
-
-  const people = await db.person.findMany({
-    where: { isDemo: false },
-    select: { id: true, name: true },
-  });
-  const resolvedCsv = resolveProjectCsvPeople(parsedCsv.data, people);
-  if (!resolvedCsv.ok) {
-    return {
-      ok: false,
-      code: "VALIDATION",
-      error: "CSV validation failed.",
-      errors: resolvedCsv.errors,
-    };
-  }
-
-  try {
-    await db.$transaction(async (tx) => {
-      for (const project of resolvedCsv.data) {
-        await tx.project.create({
-          data: {
-            name: project.name,
-            client: project.client,
-            category: project.category,
-            status: project.status,
-            priority: project.priority,
-            ownerId: project.ownerId,
-            progress: deriveProgress(0, project.deliverables.length),
-            startDate: dateOnlyUTC(project.startDate),
-            endDate: dateOnlyUTC(project.endDate),
-            version: 1,
-            isDemo: session.isDemo,
-            createdById: session.personId,
-            updatedById: session.personId,
-            members: {
-              create: project.memberIds.map((personId) => ({ personId })),
-            },
-            milestones: {
-              create: project.deliverables.map((deliverable) => ({
-                name: deliverable.name,
-                dueDate: dateOnlyUTC(deliverable.dueDate),
-                done: false,
-                version: 1,
-                updatedById: session.personId,
-              })),
-            },
-          },
-        });
-      }
-    });
-  } catch {
-    const errors = [
-      "Import failed before any projects were created. Please try again.",
-    ];
-    return {
-      ok: false,
-      code: "ERROR",
-      error: errors[0],
-      errors,
-    };
-  }
-
-  revalidateProjectRoutes();
-  return { ok: true, data: { count: resolvedCsv.data.length } };
 }
 
 export async function updateProject(
@@ -296,9 +185,11 @@ export async function updateProject(
   }
 
   const { memberIds, startDate, endDate, ...rest } = parsed.data;
-  const uniqueMemberIds = Array.from(new Set(memberIds));
+  const uniqueMemberIds = Array.from(new Set(memberIds)).filter(
+    (personId) => personId !== rest.ownerId,
+  );
 
-  const peopleCheck = await assertRealPeople(rest.ownerId, uniqueMemberIds);
+  const peopleCheck = await assertRealPeople([rest.ownerId, ...uniqueMemberIds]);
   if (!peopleCheck.ok) {
     return { ok: false, code: "VALIDATION", error: peopleCheck.error };
   }

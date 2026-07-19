@@ -20,23 +20,31 @@ export const projectStatusSchema = z.enum([
 ]);
 export const projectPrioritySchema = z.enum(["high", "medium", "low"]);
 
+const projectBaseFields = {
+  name: requiredText(200),
+  client: nonEmptyText,
+  category: projectCategorySchema,
+  status: projectStatusSchema,
+  priority: projectPrioritySchema,
+  memberIds: z.array(nonEmptyText),
+  startDate: z.coerce.date(),
+  endDate: z.coerce.date(),
+  notes: z.string().optional(),
+};
+
+const endAfterStart = {
+  message: "End date must be on or after start date.",
+  path: ["endDate"],
+};
+
+// Creation has no ownerId — the server stamps the session user as owner.
+export const projectCreateSchema = z
+  .object(projectBaseFields)
+  .refine((project) => project.endDate >= project.startDate, endAfterStart);
+
 export const projectInputSchema = z
-  .object({
-    name: requiredText(200),
-    client: nonEmptyText,
-    category: projectCategorySchema,
-    status: projectStatusSchema,
-    priority: projectPrioritySchema,
-    ownerId: nonEmptyText,
-    memberIds: z.array(nonEmptyText),
-    startDate: z.coerce.date(),
-    endDate: z.coerce.date(),
-    notes: z.string().optional(),
-  })
-  .refine((project) => project.endDate >= project.startDate, {
-    message: "End date must be on or after start date.",
-    path: ["endDate"],
-  });
+  .object({ ...projectBaseFields, ownerId: nonEmptyText })
+  .refine((project) => project.endDate >= project.startDate, endAfterStart);
 
 export const milestoneInputSchema = z.object({
   name: requiredText(200),

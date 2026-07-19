@@ -150,6 +150,7 @@ export default async function ProjectsPage({
         ownerOptions={ownerOptions}
         totalCount={unfilteredProjects.length}
         people={people}
+        currentPersonId={sessionPersonId}
       />
     </div>
   );

@@ -19,7 +19,7 @@ import {
 import { createProject, updateProject } from "@/lib/actions/projects";
 import type { ProjectWithRelations } from "@/lib/actions/projects";
 import { dateOnlyUTC, deriveProgress } from "@/lib/health";
-import { projectInputSchema } from "@/lib/validation";
+import { projectCreateSchema, projectInputSchema } from "@/lib/validation";
 
 import { MembersPicker, OwnerPicker } from "./people-picker";
 
@@ -109,11 +109,13 @@ function mapIssues(
 export function DetailsTab({
   project,
   people,
+  currentPersonId,
   mode,
   onClose,
 }: {
   project: ProjectWithRelations | null;
   people: Person[];
+  currentPersonId?: string;
   mode: "new" | "edit";
   onClose: () => void;
 }) {
@@ -136,6 +138,8 @@ export function DetailsTab({
     }
   }, [resetSignal]);
 
+  // New projects are owned by the signed-in user (stamped server-side), so
+  // the owner is only part of the payload when editing.
   function buildPayload(values: FormState) {
     return {
       name: values.name,
@@ -143,7 +147,7 @@ export function DetailsTab({
       category: values.category,
       status: values.status,
       priority: values.priority,
-      ownerId: values.ownerId,
+      ...(mode === "edit" ? { ownerId: values.ownerId } : {}),
       memberIds: values.memberIds,
       startDate: dateOnlyUTC(new Date(values.startDate)),
       endDate: dateOnlyUTC(new Date(values.endDate)),
@@ -153,7 +157,8 @@ export function DetailsTab({
   }
 
   function submit(addAnother: boolean) {
-    const parsed = projectInputSchema.safeParse(buildPayload(state));
+    const schema = mode === "new" ? projectCreateSchema : projectInputSchema;
+    const parsed = schema.safeParse(buildPayload(state));
     if (!parsed.success) {
       setErrors(mapIssues(parsed.error.issues));
       return;
@@ -306,25 +311,35 @@ export function DetailsTab({
           </Select>
         </div>
 
-        <div className="space-y-1.5">
-          <Label>Owner</Label>
-          <OwnerPicker
-            people={people}
-            value={state.ownerId}
-            invalid={Boolean(errors.ownerId)}
-            onChange={(ownerId) =>
-              setState((prev) => ({ ...prev, ownerId }))
-            }
-          />
-          {errors.ownerId ? (
-            <p className="text-xs text-destructive">{errors.ownerId}</p>
-          ) : null}
-        </div>
+        {mode === "edit" ? (
+          <div className="space-y-1.5">
+            <Label>Owner</Label>
+            <OwnerPicker
+              people={people}
+              value={state.ownerId}
+              invalid={Boolean(errors.ownerId)}
+              onChange={(ownerId) =>
+                setState((prev) => ({
+                  ...prev,
+                  ownerId,
+                  memberIds: prev.memberIds.filter((id) => id !== ownerId),
+                }))
+              }
+            />
+            {errors.ownerId ? (
+              <p className="text-xs text-destructive">{errors.ownerId}</p>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="space-y-1.5">
           <Label>Team members</Label>
           <MembersPicker
-            people={people}
+            people={people.filter(
+              (person) =>
+                person.id !==
+                (mode === "new" ? currentPersonId : state.ownerId),
+            )}
             value={state.memberIds}
             onChange={(memberIds) =>
               setState((prev) => ({ ...prev, memberIds }))
