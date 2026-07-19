@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { db } from "@/lib/db";
 import { computeHealth } from "@/lib/health";
+import { sanitizePerson } from "@/lib/sanitize-person";
 import type { ProjectWithRelations } from "@/lib/actions/projects";
 
 import { ProjectDetail } from "./project-detail";
@@ -31,6 +32,15 @@ export default async function ProjectDetailPage({
     notFound();
   }
 
+  const safeProject = {
+    ...project,
+    owner: sanitizePerson(project.owner),
+    members: project.members.map((member) => ({
+      ...member,
+      person: sanitizePerson(member.person),
+    })),
+  };
+
   const health = computeHealth({
     status: project.status,
     endDate: project.endDate,
@@ -39,8 +49,8 @@ export default async function ProjectDetailPage({
 
   return (
     <ProjectDetail
-      project={project as ProjectWithRelations}
-      people={people}
+      project={safeProject as ProjectWithRelations}
+      people={people.map(sanitizePerson)}
       health={health}
     />
   );

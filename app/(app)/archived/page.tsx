@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { sanitizePerson } from "@/lib/sanitize-person";
 import { getSession } from "@/lib/session";
 import {
   ArchivedProjectsTable,
@@ -33,10 +34,12 @@ export default async function ArchivedPage({
   const params = await searchParams;
   const peopleParam = firstSearchParam(params.people);
 
-  const activePeople = await db.person.findMany({
-    where: { active: true },
-    orderBy: { name: "asc" },
-  });
+  const activePeople = (
+    await db.person.findMany({
+      where: { active: true },
+      orderBy: { name: "asc" },
+    })
+  ).map(sanitizePerson);
 
   const session = await getSession();
   const sessionPersonId = session?.personId ?? activePeople[0]?.id ?? "";

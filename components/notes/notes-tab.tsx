@@ -1,14 +1,6 @@
 "use client";
 
-import {
-  forwardRef,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor, useEditorState, type JSONContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Bold, Heading2, Italic, List, ListOrdered } from "lucide-react";
@@ -21,10 +13,6 @@ import { cn } from "@/lib/utils";
 const AUTOSAVE_DELAY_MS = 1500;
 
 type SaveState = "saved" | "dirty" | "saving" | "error" | "conflict";
-
-export type NotesTabHandle = {
-  flush: () => Promise<void>;
-};
 
 function parseNotesContent(notes: string | null): JSONContent {
   if (notes) {
@@ -55,10 +43,7 @@ type NotesTabProps = {
   notes: string | null;
 };
 
-export const NotesTab = forwardRef<NotesTabHandle, NotesTabProps>(function NotesTab(
-  { projectId, version, notes },
-  ref,
-) {
+export function NotesTab({ projectId, version, notes }: NotesTabProps) {
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const versionRef = useRef(version);
   const conflictRef = useRef(false);
@@ -143,8 +128,6 @@ export const NotesTab = forwardRef<NotesTabHandle, NotesTabProps>(function Notes
     saveQueueRef.current = queuedSave;
     return queuedSave;
   }, [projectId, updateSaveState]);
-
-  useImperativeHandle(ref, () => ({ flush: flushLatest }), [flushLatest]);
 
   const editor = useEditor({
     extensions: [StarterKit],
@@ -299,4 +282,4 @@ export const NotesTab = forwardRef<NotesTabHandle, NotesTabProps>(function Notes
       </div>
     </div>
   );
-});
+}

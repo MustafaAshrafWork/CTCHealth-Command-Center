@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { computeHealth, dateOnlyUTC } from "@/lib/health";
+import { sanitizePerson } from "@/lib/sanitize-person";
 import { getSession } from "@/lib/session";
 import { PeopleFilter } from "@/components/filters/people-filter";
 import {
@@ -17,12 +18,6 @@ import type { ProjectRow } from "@/components/projects-table/types";
 
 export const dynamic = "force-dynamic";
 
-const projectInclude = {
-  owner: true,
-  members: { include: { person: true } },
-  milestones: true,
-} as const;
-
 export default async function ProjectsPage({
   searchParams,
 }: {
@@ -31,13 +26,15 @@ export default async function ProjectsPage({
   const params = await searchParams;
   const peopleParam = firstSearchParam(params.people);
 
-  const [activePeople, allPeople] = await Promise.all([
+  const [activePeopleRaw, allPeopleRaw] = await Promise.all([
     db.person.findMany({
       where: { active: true },
       orderBy: { name: "asc" },
     }),
     db.person.findMany({ orderBy: { name: "asc" } }),
   ]);
+  const activePeople = activePeopleRaw.map(sanitizePerson);
+  const allPeople = allPeopleRaw.map(sanitizePerson);
 
   const session = await getSession();
   const sessionPersonId = session?.personId ?? activePeople[0]?.id ?? "";
@@ -86,7 +83,7 @@ export default async function ProjectsPage({
         ? { ownerId: { in: filters.owner } }
         : {}),
     },
-    include: projectInclude,
+    include: { owner: true },
   });
 
   const people = allPeople;

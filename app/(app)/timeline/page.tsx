@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { sanitizePerson } from "@/lib/sanitize-person";
 import { computeHealth, dateOnlyUTC } from "@/lib/health";
 import { getSession } from "@/lib/session";
 import {
@@ -30,10 +31,12 @@ export default async function TimelinePage({
   const params = await searchParams;
   const peopleParam = firstSearchParam(params.people);
 
-  const activePeople = await db.person.findMany({
-    where: { active: true },
-    orderBy: { name: "asc" },
-  });
+  const activePeople = (
+    await db.person.findMany({
+      where: { active: true },
+      orderBy: { name: "asc" },
+    })
+  ).map(sanitizePerson);
 
   const session = await getSession();
   const sessionPersonId = session?.personId ?? activePeople[0]?.id ?? "";
