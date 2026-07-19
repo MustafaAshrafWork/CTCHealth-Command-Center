@@ -22,6 +22,7 @@ export async function GET() {
   }
 
   const ideas = await db.idea.findMany({
+    where: { isDemo: session.isDemo },
     include: { author: true },
     orderBy: { createdAt: "desc" },
   });

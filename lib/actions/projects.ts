@@ -54,11 +54,12 @@ function revalidateProjectRoutes(): void {
 }
 
 async function requireSessionResult(): Promise<
-  { ok: true; personId: string } | { ok: false; code: "UNAUTHORIZED"; error: string }
+  | { ok: true; personId: string; isDemo: boolean }
+  | { ok: false; code: "UNAUTHORIZED"; error: string }
 > {
   try {
     const session = await requireSession();
-    return { ok: true, personId: session.personId };
+    return { ok: true, personId: session.personId, isDemo: session.isDemo };
   } catch {
     return {
       ok: false,
@@ -93,6 +94,7 @@ export async function createProject(
       ...rest,
       startDate: dateOnlyUTC(startDate),
       endDate: dateOnlyUTC(endDate),
+      isDemo: session.isDemo,
       createdById: session.personId,
       updatedById: session.personId,
       members: {
@@ -140,7 +142,7 @@ export async function updateProject(
     const milestoneCount = await tx.milestone.count({ where: { projectId: id } });
 
     const updateResult = await tx.project.updateMany({
-      where: { id, version },
+      where: { id, version, isDemo: session.isDemo },
       data: {
         ...rest,
         ...(milestoneCount > 0 ? {} : { progress }),
@@ -170,7 +172,7 @@ export async function updateProject(
 
   if (updated === null) {
     const exists = await db.project.findUnique({
-      where: { id },
+      where: { id, isDemo: session.isDemo },
       select: { id: true },
     });
     if (exists) {
@@ -205,7 +207,7 @@ export async function setProjectStatus(
   }
 
   const updateResult = await db.project.updateMany({
-    where: { id, version },
+    where: { id, version, isDemo: session.isDemo },
     data: {
       status: parsed.data,
       version: { increment: 1 },
@@ -215,7 +217,7 @@ export async function setProjectStatus(
 
   if (updateResult.count === 0) {
     const exists = await db.project.findUnique({
-      where: { id },
+      where: { id, isDemo: session.isDemo },
       select: { id: true },
     });
     if (exists) {
@@ -249,7 +251,7 @@ export async function setArchived(
   const results = await Promise.all(
     parsedProjects.data.map((project) =>
       db.project.updateMany({
-        where: { id: project.id, version: project.version },
+        where: { id: project.id, version: project.version, isDemo: session.isDemo },
         data: {
           archived,
           version: { increment: 1 },

@@ -57,6 +57,7 @@ export async function loginAs(
       active: true,
       canLogin: true,
       passwordHash: true,
+      isDemo: true,
     },
   });
 
@@ -76,7 +77,25 @@ export async function loginAs(
     return { ok: false, code: "UNAUTHORIZED", error: "Invalid password." };
   }
 
-  await createSession({ id: person.id, name: person.name });
+  await createSession({ id: person.id, name: person.name, isDemo: person.isDemo });
+  redirect("/projects");
+}
+
+export async function loginAsDemo(): Promise<ActionResult<never>> {
+  const demoPerson = await db.person.findFirst({
+    where: { isDemo: true, canLogin: true, active: true },
+    select: { id: true, name: true },
+  });
+
+  if (!demoPerson) {
+    return {
+      ok: false,
+      code: "NOT_FOUND",
+      error: "Demo account is not available.",
+    };
+  }
+
+  await createSession({ id: demoPerson.id, name: demoPerson.name, isDemo: true });
   redirect("/projects");
 }
 

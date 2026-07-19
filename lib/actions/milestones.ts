@@ -42,11 +42,12 @@ async function syncProjectProgress(projectId: string): Promise<void> {
 }
 
 async function requireSessionResult(): Promise<
-  { ok: true; personId: string } | { ok: false; code: "UNAUTHORIZED"; error: string }
+  | { ok: true; personId: string; isDemo: boolean }
+  | { ok: false; code: "UNAUTHORIZED"; error: string }
 > {
   try {
     const session = await requireSession();
-    return { ok: true, personId: session.personId };
+    return { ok: true, personId: session.personId, isDemo: session.isDemo };
   } catch {
     return {
       ok: false,
@@ -61,10 +62,10 @@ async function checkAssignee(
 ): Promise<{ ok: true } | { ok: false; code: "NOT_FOUND" | "VALIDATION"; error: string }> {
   const assignee = await db.person.findUnique({
     where: { id: assigneeId },
-    select: { active: true },
+    select: { active: true, isDemo: true },
   });
 
-  if (!assignee) {
+  if (!assignee || assignee.isDemo) {
     return { ok: false, code: "NOT_FOUND", error: "Assignee not found." };
   }
 
@@ -109,7 +110,7 @@ export async function createMilestone(
   }
 
   const project = await db.project.findUnique({
-    where: { id: projectId },
+    where: { id: projectId, isDemo: session.isDemo },
     select: { id: true },
   });
 
@@ -164,7 +165,7 @@ export async function updateMilestone(
   }
 
   const updateResult = await db.milestone.updateMany({
-    where: { id, version },
+    where: { id, version, project: { isDemo: session.isDemo } },
     data: {
       name: parsed.data.name,
       dueDate: dateOnlyUTC(parsed.data.dueDate),
@@ -176,8 +177,8 @@ export async function updateMilestone(
   });
 
   if (updateResult.count === 0) {
-    const exists = await db.milestone.findUnique({
-      where: { id },
+    const exists = await db.milestone.findFirst({
+      where: { id, project: { isDemo: session.isDemo } },
       select: { id: true },
     });
     if (exists) {
@@ -207,11 +208,13 @@ export async function deleteMilestone(
   }
   id = parsedId.data;
 
-  const milestone = await db.milestone.findUnique({
-    where: { id },
+  const milestone = await db.milestone.findFirst({
+    where: { id, project: { isDemo: session.isDemo } },
     select: { projectId: true },
   });
-  const deleteResult = await db.milestone.deleteMany({ where: { id, version } });
+  const deleteResult = await db.milestone.deleteMany({
+    where: { id, version, project: { isDemo: session.isDemo } },
+  });
 
   if (deleteResult.count === 0 || !milestone) {
     return { ok: false, code: "CONFLICT", error: CONFLICT_MESSAGE };

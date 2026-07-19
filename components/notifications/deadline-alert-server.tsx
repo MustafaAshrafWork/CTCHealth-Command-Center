@@ -16,13 +16,16 @@ const dateLabel = new Intl.DateTimeFormat("en-US", {
 
 export async function DeadlineAlertServer({
   personId,
+  isDemo,
 }: {
   personId: string;
+  isDemo: boolean;
 }) {
   const projects = await db.project.findMany({
     where: {
       archived: false,
       status: { not: "completed" },
+      isDemo,
     },
     orderBy: { endDate: "asc" },
     select: {

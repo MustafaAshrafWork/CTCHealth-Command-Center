@@ -32,7 +32,7 @@ export default async function AppLayout({
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar userName={person.name} isAdmin={person.isAdmin} />
-        <DeadlineAlertServer personId={session.personId} />
+        <DeadlineAlertServer personId={session.personId} isDemo={session.isDemo} />
         <main className="min-h-0 flex-1 overflow-auto overflow-x-hidden p-6">{children}</main>
       </div>
     </div>

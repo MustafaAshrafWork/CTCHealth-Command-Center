@@ -23,7 +23,10 @@ export default async function IdeasPage() {
 
   const isAdmin = person.isAdmin;
   const ideas = await db.idea.findMany({
-    where: isAdmin ? undefined : { authorId: session.personId },
+    where: {
+      isDemo: session.isDemo,
+      ...(isAdmin ? {} : { authorId: session.personId }),
+    },
     include: { author: true },
     orderBy: { createdAt: "desc" },
   });

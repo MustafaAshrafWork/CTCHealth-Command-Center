@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { computeHealth } from "@/lib/health";
 import { sanitizePerson } from "@/lib/sanitize-person";
+import { getSession } from "@/lib/session";
 import type { ProjectWithRelations } from "@/lib/actions/projects";
 
 import { ProjectDetail } from "./project-detail";
@@ -15,17 +16,19 @@ export default async function ProjectDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const session = await getSession();
+  const isDemo = session?.isDemo ?? false;
 
   const [project, people] = await Promise.all([
     db.project.findUnique({
-      where: { id },
+      where: { id, isDemo },
       include: {
         owner: true,
         members: { include: { person: true } },
         milestones: true,
       },
     }),
-    db.person.findMany({ orderBy: { name: "asc" } }),
+    db.person.findMany({ where: { isDemo: false }, orderBy: { name: "asc" } }),
   ]);
 
   if (!project) {

@@ -14,6 +14,7 @@ model Person {
   passwordHash       String?
   mustChangePassword Boolean         @default(true)
   isAdmin            Boolean         @default(false)
+  isDemo             Boolean         @default(false)
   createdAt          DateTime        @default(now())
   ownedProjects      Project[]       @relation("ProjectOwner")
   createdProjects    Project[]       @relation("ProjectCreatedBy")
@@ -31,6 +32,7 @@ model Project {
   category    String
   status      String          @default("planning")
   priority    String          @default("medium")
+  isDemo      Boolean         @default(false)
   ownerId     String
   owner       Person          @relation("ProjectOwner", fields: [ownerId], references: [id])
   progress    Int
@@ -88,6 +90,7 @@ model Idea {
   text      String
   authorId  String
   author    Person   @relation(fields: [authorId], references: [id])
+  isDemo    Boolean  @default(false)
   createdAt DateTime @default(now())
 
   @@index([authorId])

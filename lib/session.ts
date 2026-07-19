@@ -34,10 +34,12 @@ function getSecretKey(): Uint8Array {
 export async function createSession(person: {
   id: string;
   name: string;
+  isDemo: boolean;
 }): Promise<void> {
   const token = await new SignJWT({
     personId: person.id,
     name: person.name,
+    isDemo: person.isDemo,
   } satisfies Session)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
@@ -71,7 +73,8 @@ export async function getSession(): Promise<Session | null> {
     ) {
       return null;
     }
-    return { personId: payload.personId, name: payload.name };
+    const isDemo = typeof payload.isDemo === "boolean" ? payload.isDemo : false;
+    return { personId: payload.personId, name: payload.name, isDemo };
   } catch {
     return null;
   }

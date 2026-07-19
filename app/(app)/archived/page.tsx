@@ -36,21 +36,23 @@ export default async function ArchivedPage({
 
   const activePeople = (
     await db.person.findMany({
-      where: { active: true },
+      where: { active: true, isDemo: false },
       orderBy: { name: "asc" },
     })
   ).map(sanitizePerson);
 
   const session = await getSession();
+  const isDemo = session?.isDemo ?? false;
   const sessionPersonId = session?.personId ?? activePeople[0]?.id ?? "";
+  const effectivePeopleParam = peopleParam ?? (isDemo ? "all" : undefined);
   const { ids: selectedIds, isAll } = parsePeopleParam(
-    peopleParam,
+    effectivePeopleParam,
     activePeople.map((p) => p.id),
     sessionPersonId,
   );
 
   const unfilteredProjects = await db.project.findMany({
-    where: { archived: true, ...personWhereClause(selectedIds) },
+    where: { archived: true, isDemo, ...personWhereClause(selectedIds) },
     select: { client: true },
   });
   const clientOptions = Array.from(
@@ -65,6 +67,7 @@ export default async function ArchivedPage({
   const projects = await db.project.findMany({
     where: {
       archived: true,
+      isDemo,
       ...personWhereClause(selectedIds),
       ...(filters.client.length > 0
         ? { client: { in: filters.client } }

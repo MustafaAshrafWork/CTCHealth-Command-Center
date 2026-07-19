@@ -55,7 +55,7 @@ export async function saveNotes(
   }
 
   const updateResult = await db.project.updateMany({
-    where: { id: projectId, version },
+    where: { id: projectId, version, isDemo: session.isDemo },
     data: {
       notes: parsed.data,
       version: { increment: 1 },
@@ -65,7 +65,7 @@ export async function saveNotes(
 
   if (updateResult.count === 0) {
     const exists = await db.project.findUnique({
-      where: { id: projectId },
+      where: { id: projectId, isDemo: session.isDemo },
       select: { id: true },
     });
     if (exists) {

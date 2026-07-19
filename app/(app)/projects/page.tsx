@@ -28,18 +28,20 @@ export default async function ProjectsPage({
 
   const [activePeopleRaw, allPeopleRaw] = await Promise.all([
     db.person.findMany({
-      where: { active: true },
+      where: { active: true, isDemo: false },
       orderBy: { name: "asc" },
     }),
-    db.person.findMany({ orderBy: { name: "asc" } }),
+    db.person.findMany({ where: { isDemo: false }, orderBy: { name: "asc" } }),
   ]);
   const activePeople = activePeopleRaw.map(sanitizePerson);
   const allPeople = allPeopleRaw.map(sanitizePerson);
 
   const session = await getSession();
+  const isDemo = session?.isDemo ?? false;
   const sessionPersonId = session?.personId ?? activePeople[0]?.id ?? "";
+  const effectivePeopleParam = peopleParam ?? (isDemo ? "all" : undefined);
   const { ids: selectedIds, isAll } = parsePeopleParam(
-    peopleParam,
+    effectivePeopleParam,
     activePeople.map((p) => p.id),
     sessionPersonId,
   );
@@ -47,6 +49,7 @@ export default async function ProjectsPage({
   const unfilteredProjects = await db.project.findMany({
     where: {
       archived: false,
+      isDemo,
       ...personWhereClause(selectedIds),
     },
     select: { client: true },
@@ -66,6 +69,7 @@ export default async function ProjectsPage({
   const projects = await db.project.findMany({
     where: {
       archived: false,
+      isDemo,
       ...personWhereClause(selectedIds),
       ...(filters.client.length > 0
         ? { client: { in: filters.client } }

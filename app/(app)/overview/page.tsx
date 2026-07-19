@@ -9,6 +9,7 @@ import {
   healthLabel,
   type Health,
 } from "@/lib/health";
+import { getSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -37,8 +38,11 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", {
 const MILLISECONDS_PER_WEEK = 7 * 24 * 60 * 60 * 1_000;
 
 export default async function OverviewPage() {
+  const session = await getSession();
+  const isDemo = session?.isDemo ?? false;
+
   const projects = await db.project.findMany({
-    where: { archived: false },
+    where: { archived: false, isDemo },
     include: { owner: true, milestones: true },
   });
 

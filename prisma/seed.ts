@@ -20,6 +20,7 @@ const LOGIN_PERSONAS = [
 ] as const;
 
 const ADMIN_NAME = "Mustafa Ashraf";
+const DEMO_NAME = "Demo";
 
 const CATEGORIES = ["tech", "consultancy", "agency", "agents"] as const;
 const STATUSES = ["planning", "active", "on_hold", "completed"] as const;
@@ -176,6 +177,31 @@ async function upsertPeople(): Promise<Person[]> {
   );
 }
 
+async function upsertDemoPerson(): Promise<Person> {
+  const passwordHash = await hashPassword(generatePassword());
+
+  return db.person.upsert({
+    where: { name: DEMO_NAME },
+    update: {
+      active: true,
+      canLogin: true,
+      isAdmin: false,
+      isDemo: true,
+      mustChangePassword: false,
+    },
+    create: {
+      name: DEMO_NAME,
+      active: true,
+      canLogin: true,
+      isAdmin: false,
+      isDemo: true,
+      mustChangePassword: false,
+      passwordHash,
+      createdAt: SEED_TODAY,
+    },
+  });
+}
+
 async function bootstrapPasswords(): Promise<void> {
   const passwordFile = path.resolve(
     process.cwd(),
@@ -198,14 +224,14 @@ async function bootstrapPasswords(): Promise<void> {
     }),
   );
 
-  await writeFile(
-    passwordFile,
-    batch.length > 0
-      ? `${batch.map((person) => `${person.name}: ${person.password}`).join("\n")}\n`
-      : "",
-    { encoding: "utf8", mode: 0o600 },
-  );
-  await chmod(passwordFile, 0o600).catch(() => undefined);
+  if (batch.length > 0) {
+    await writeFile(
+      passwordFile,
+      `${batch.map((person) => `${person.name}: ${person.password}`).join("\n")}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    await chmod(passwordFile, 0o600).catch(() => undefined);
+  }
 
   if (batch.length > 0) {
     await db.$transaction(
@@ -259,6 +285,7 @@ function projectDataFor(index: number, people: Person[]): Prisma.ProjectCreateIn
     category: CATEGORIES[index % CATEGORIES.length],
     status: index < SPECIAL_END_OFFSETS.length ? "active" : STATUSES[index % STATUSES.length],
     priority: PRIORITIES[index % PRIORITIES.length],
+    isDemo: true,
     owner: { connect: { id: owner.id } },
     progress,
     archived: ARCHIVED_INDEXES.has(index),
@@ -299,6 +326,7 @@ function projectDataFor(index: number, people: Person[]): Prisma.ProjectCreateIn
 
 async function main(): Promise<void> {
   const allPeople = await upsertPeople();
+  await upsertDemoPerson();
   await bootstrapPasswords();
 
   const people = allPeople.slice(0, LOGIN_PERSONAS.length);

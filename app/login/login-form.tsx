@@ -3,17 +3,33 @@
 import { Fragment, useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { loginAs } from "@/lib/actions/people";
+import { loginAs, loginAsDemo } from "@/lib/actions/people";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 type Person = { id: string; name: string };
 
-export function LoginForm({ persons }: { persons: Person[] }) {
+export function LoginForm({
+  demoPerson,
+  persons,
+}: {
+  demoPerson: Person | null;
+  persons: Person[];
+}) {
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [isDemoPending, startDemoTransition] = useTransition();
+
+  function submitDemoLogin() {
+    startDemoTransition(async () => {
+      const result = await loginAsDemo();
+      if (!result.ok) {
+        toast.error(result.error);
+      }
+    });
+  }
 
   const selectedPerson = persons.find(
     (person) => person.id === selectedPersonId,
@@ -40,6 +56,24 @@ export function LoginForm({ persons }: { persons: Person[] }) {
 
   return (
     <div className="flex flex-col gap-2">
+      {demoPerson ? (
+        <>
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            className="h-auto flex-col items-start gap-0.5 py-2 text-left text-base"
+            disabled={isDemoPending || isPending}
+            onClick={submitDemoLogin}
+          >
+            <span>{isDemoPending ? "Signing in…" : demoPerson.name}</span>
+            <span className="text-xs font-normal text-muted-foreground">
+              Sample data — explore freely
+            </span>
+          </Button>
+          <div className="my-1 h-px bg-border" />
+        </>
+      ) : null}
       {persons.map((person) => {
         const selected = person.id === selectedPersonId;
 
@@ -50,7 +84,7 @@ export function LoginForm({ persons }: { persons: Person[] }) {
               variant={selected ? "default" : "outline"}
               size="lg"
               className="h-11 justify-center text-base"
-              disabled={isPending}
+              disabled={isPending || isDemoPending}
               aria-expanded={selected}
               onClick={() => selectPerson(person.id)}
             >

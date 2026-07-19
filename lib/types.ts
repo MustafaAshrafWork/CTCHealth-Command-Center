@@ -14,4 +14,5 @@ export type ActionResult<T = unknown> =
 export type Session = {
   personId: string;
   name: string;
+  isDemo: boolean;
 };

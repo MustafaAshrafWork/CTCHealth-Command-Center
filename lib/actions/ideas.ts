@@ -31,7 +31,11 @@ export async function createIdea(
   }
 
   const idea = await db.idea.create({
-    data: { text: parsed.data, authorId: session.personId },
+    data: {
+      text: parsed.data,
+      authorId: session.personId,
+      isDemo: session.isDemo,
+    },
   });
 
   revalidatePath("/ideas");

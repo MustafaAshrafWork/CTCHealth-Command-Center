@@ -24,11 +24,14 @@ export default async function LoginPage() {
 
   const persons = await db.person.findMany({
     where: { canLogin: true, active: true },
-    select: { id: true, name: true },
+    select: { id: true, name: true, isDemo: true },
     orderBy: { name: "asc" },
   });
 
-  const sortedPersons = [...persons].sort((a, b) => {
+  const demoPerson = persons.find((person) => person.isDemo) ?? null;
+  const realPersons = persons.filter((person) => !person.isDemo);
+
+  const sortedPersons = [...realPersons].sort((a, b) => {
     const aIndex = PERSONA_ORDER.indexOf(a.name as (typeof PERSONA_ORDER)[number]);
     const bIndex = PERSONA_ORDER.indexOf(b.name as (typeof PERSONA_ORDER)[number]);
     const aRank = aIndex === -1 ? PERSONA_ORDER.length : aIndex;
@@ -55,7 +58,7 @@ export default async function LoginPage() {
           <Badge variant="secondary">MVP · Pilot</Badge>
         </div>
 
-        <LoginForm persons={sortedPersons} />
+        <LoginForm demoPerson={demoPerson} persons={sortedPersons} />
 
         <p className="mt-6 text-center text-xs text-muted-foreground">
           Pilot build — use the password provided by your administrator.
