@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ctchealth-command-center
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /login
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DATABASE_URL
+        value: file:/data/prod.db
+      - key: SESSION_SECRET
+        sync: false

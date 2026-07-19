@@ -1,0 +1,24 @@
+# Railway config for the existing Docker image (unchanged Dockerfile).
+#
+# Volume and env vars are NOT expressible in this file — attach them via the
+# Railway dashboard or CLI after the service is created:
+#
+#   railway login
+#   railway init                                   # or: railway link (existing project)
+#   railway volume add --mount-path /data          # persistent disk for SQLite
+#   railway variables --set "DATABASE_URL=file:/data/prod.db"
+#   railway variables --set "SESSION_SECRET=$(openssl rand -hex 32)"
+#   railway up                                     # build + deploy from Dockerfile
+#
+# Health check path below assumes the service is reachable at the generated
+# *.up.railway.app domain or an attached custom domain (verify in dashboard).
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/login"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
