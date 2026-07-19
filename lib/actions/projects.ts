@@ -125,15 +125,19 @@ export async function createProject(
     };
   }
 
-  const { memberIds, startDate, endDate, ...rest } = parsed.data;
-  // The session user owns every project they create; the owner is never
-  // duplicated into the member list.
-  const ownerId = session.personId;
+  const { memberIds, deliverables, startDate, endDate, ...rest } = parsed.data;
+  // The owner is never duplicated into the member list.
   const uniqueMemberIds = Array.from(new Set(memberIds)).filter(
-    (personId) => personId !== ownerId,
+    (personId) => personId !== rest.ownerId,
   );
 
-  const peopleCheck = await assertRealPeople(uniqueMemberIds);
+  // The form defaults the owner to the session user; that self-ownership is
+  // always allowed (demo included), so only check other people.
+  const idsToCheck =
+    rest.ownerId === session.personId
+      ? uniqueMemberIds
+      : [rest.ownerId, ...uniqueMemberIds];
+  const peopleCheck = await assertRealPeople(idsToCheck);
   if (!peopleCheck.ok) {
     return { ok: false, code: "VALIDATION", error: peopleCheck.error };
   }
@@ -141,7 +145,6 @@ export async function createProject(
   const project = await db.project.create({
     data: {
       ...rest,
-      ownerId,
       progress: 0,
       startDate: dateOnlyUTC(startDate),
       endDate: dateOnlyUTC(endDate),
@@ -150,6 +153,14 @@ export async function createProject(
       updatedById: session.personId,
       members: {
         create: uniqueMemberIds.map((personId) => ({ personId })),
+      },
+      milestones: {
+        create: deliverables.map((deliverable) => ({
+          name: deliverable.name,
+          dueDate: dateOnlyUTC(deliverable.dueDate),
+          done: false,
+          updatedById: session.personId,
+        })),
       },
     },
     include: projectInclude,

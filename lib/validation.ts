@@ -26,6 +26,7 @@ const projectBaseFields = {
   category: projectCategorySchema,
   status: projectStatusSchema,
   priority: projectPrioritySchema,
+  ownerId: nonEmptyText,
   memberIds: z.array(nonEmptyText),
   startDate: z.coerce.date(),
   endDate: z.coerce.date(),
@@ -37,13 +38,21 @@ const endAfterStart = {
   path: ["endDate"],
 };
 
-// Creation has no ownerId — the server stamps the session user as owner.
-export const projectCreateSchema = z
+export const projectInputSchema = z
   .object(projectBaseFields)
   .refine((project) => project.endDate >= project.startDate, endAfterStart);
 
-export const projectInputSchema = z
-  .object({ ...projectBaseFields, ownerId: nonEmptyText })
+// Creation also accepts the initial deliverables entered in the modal.
+export const projectCreateSchema = z
+  .object({
+    ...projectBaseFields,
+    deliverables: z.array(
+      z.object({
+        name: requiredText(200),
+        dueDate: z.coerce.date(),
+      }),
+    ),
+  })
   .refine((project) => project.endDate >= project.startDate, endAfterStart);
 
 export const milestoneInputSchema = z.object({

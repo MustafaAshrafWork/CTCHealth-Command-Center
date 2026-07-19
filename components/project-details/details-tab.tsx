@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import type { Person } from "@prisma/client";
 
@@ -18,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { createProject, updateProject } from "@/lib/actions/projects";
 import type { ProjectWithRelations } from "@/lib/actions/projects";
-import { dateOnlyUTC, deriveProgress } from "@/lib/health";
+import { dateOnlyUTC } from "@/lib/health";
 import { projectCreateSchema, projectInputSchema } from "@/lib/validation";
 
 import { MembersPicker, OwnerPicker } from "./people-picker";
@@ -43,6 +44,11 @@ const PRIORITY_OPTIONS = [
   { value: "low", label: "Low" },
 ] as const;
 
+type DeliverableDraft = {
+  name: string;
+  dueDate: string;
+};
+
 type FormState = {
   name: string;
   client: string;
@@ -53,6 +59,7 @@ type FormState = {
   memberIds: string[];
   startDate: string;
   endDate: string;
+  deliverables: DeliverableDraft[];
 };
 
 function todayInputValue(): string {
@@ -64,7 +71,7 @@ function toDateInputValue(date: Date | string): string {
   return value.toISOString().slice(0, 10);
 }
 
-function defaultState(): FormState {
+function defaultState(currentPersonId?: string): FormState {
   const today = todayInputValue();
   return {
     name: "",
@@ -72,10 +79,11 @@ function defaultState(): FormState {
     category: "tech",
     status: "planning",
     priority: "medium",
-    ownerId: "",
+    ownerId: currentPersonId ?? "",
     memberIds: [],
     startDate: today,
     endDate: today,
+    deliverables: [],
   };
 }
 
@@ -90,6 +98,7 @@ function stateFromProject(project: ProjectWithRelations): FormState {
     memberIds: project.members.map((member) => member.personId),
     startDate: toDateInputValue(project.startDate),
     endDate: toDateInputValue(project.endDate),
+    deliverables: [],
   };
 }
 
@@ -120,17 +129,13 @@ export function DetailsTab({
   onClose: () => void;
 }) {
   const [state, setState] = useState<FormState>(() =>
-    project ? stateFromProject(project) : defaultState(),
+    project ? stateFromProject(project) : defaultState(currentPersonId),
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
   const [resetSignal, setResetSignal] = useState(0);
   const nameRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
-  const deliverableCount = project?.milestones.length ?? 0;
-  const deliverableDoneCount =
-    project?.milestones.filter((milestone) => milestone.done).length ?? 0;
-  const derivedProgress = deriveProgress(deliverableDoneCount, deliverableCount);
 
   useEffect(() => {
     if (resetSignal > 0) {
@@ -138,8 +143,6 @@ export function DetailsTab({
     }
   }, [resetSignal]);
 
-  // New projects are owned by the signed-in user (stamped server-side), so
-  // the owner is only part of the payload when editing.
   function buildPayload(values: FormState) {
     return {
       name: values.name,
@@ -147,10 +150,22 @@ export function DetailsTab({
       category: values.category,
       status: values.status,
       priority: values.priority,
-      ...(mode === "edit" ? { ownerId: values.ownerId } : {}),
+      ownerId: values.ownerId,
       memberIds: values.memberIds,
       startDate: dateOnlyUTC(new Date(values.startDate)),
       endDate: dateOnlyUTC(new Date(values.endDate)),
+      // Deliverables are only collected at creation; the detail page's
+      // deliverables section owns them afterwards.
+      ...(mode === "new"
+        ? {
+            deliverables: values.deliverables.map((deliverable) => ({
+              name: deliverable.name,
+              dueDate: deliverable.dueDate
+                ? dateOnlyUTC(new Date(deliverable.dueDate))
+                : "",
+            })),
+          }
+        : {}),
       // notes intentionally omitted — the Notes tab owns project.notes; a
       // stale copy here would clobber its autosaves.
     };
@@ -179,7 +194,7 @@ export function DetailsTab({
       toast.success(mode === "new" ? "Project created." : "Project saved.");
 
       if (mode === "new" && addAnother) {
-        setState(defaultState());
+        setState(defaultState(currentPersonId));
         setErrors({});
         setResetSignal((count) => count + 1);
         return;
@@ -311,35 +326,29 @@ export function DetailsTab({
           </Select>
         </div>
 
-        {mode === "edit" ? (
-          <div className="space-y-1.5">
-            <Label>Owner</Label>
-            <OwnerPicker
-              people={people}
-              value={state.ownerId}
-              invalid={Boolean(errors.ownerId)}
-              onChange={(ownerId) =>
-                setState((prev) => ({
-                  ...prev,
-                  ownerId,
-                  memberIds: prev.memberIds.filter((id) => id !== ownerId),
-                }))
-              }
-            />
-            {errors.ownerId ? (
-              <p className="text-xs text-destructive">{errors.ownerId}</p>
-            ) : null}
-          </div>
-        ) : null}
+        <div className="space-y-1.5">
+          <Label>Owner</Label>
+          <OwnerPicker
+            people={people}
+            value={state.ownerId}
+            invalid={Boolean(errors.ownerId)}
+            onChange={(ownerId) =>
+              setState((prev) => ({
+                ...prev,
+                ownerId,
+                memberIds: prev.memberIds.filter((id) => id !== ownerId),
+              }))
+            }
+          />
+          {errors.ownerId ? (
+            <p className="text-xs text-destructive">{errors.ownerId}</p>
+          ) : null}
+        </div>
 
         <div className="space-y-1.5">
           <Label>Team members</Label>
           <MembersPicker
-            people={people.filter(
-              (person) =>
-                person.id !==
-                (mode === "new" ? currentPersonId : state.ownerId),
-            )}
+            people={people.filter((person) => person.id !== state.ownerId)}
             value={state.memberIds}
             onChange={(memberIds) =>
               setState((prev) => ({ ...prev, memberIds }))
@@ -347,22 +356,88 @@ export function DetailsTab({
           />
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="project-progress">Progress</Label>
-          <div className="space-y-1">
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full bg-primary"
-                style={{ width: `${derivedProgress}%` }}
-              />
+        {mode === "new" ? (
+          <div className="space-y-1.5">
+            <Label>Deliverables</Label>
+            <div className="space-y-2">
+              {state.deliverables.map((deliverable, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <Input
+                    value={deliverable.name}
+                    placeholder="Deliverable name"
+                    disabled={isPending}
+                    onChange={(event) =>
+                      setState((prev) => ({
+                        ...prev,
+                        deliverables: prev.deliverables.map((item, i) =>
+                          i === index
+                            ? { ...item, name: event.target.value }
+                            : item,
+                        ),
+                      }))
+                    }
+                  />
+                  <Input
+                    type="date"
+                    className="w-36 shrink-0"
+                    value={deliverable.dueDate}
+                    disabled={isPending}
+                    onChange={(event) =>
+                      setState((prev) => ({
+                        ...prev,
+                        deliverables: prev.deliverables.map((item, i) =>
+                          i === index
+                            ? { ...item, dueDate: event.target.value }
+                            : item,
+                        ),
+                      }))
+                    }
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Remove deliverable"
+                    disabled={isPending}
+                    onClick={() =>
+                      setState((prev) => ({
+                        ...prev,
+                        deliverables: prev.deliverables.filter(
+                          (_, i) => i !== index,
+                        ),
+                      }))
+                    }
+                  >
+                    <X />
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isPending}
+                onClick={() =>
+                  setState((prev) => ({
+                    ...prev,
+                    deliverables: [
+                      ...prev.deliverables,
+                      { name: "", dueDate: prev.endDate },
+                    ],
+                  }))
+                }
+              >
+                <Plus data-icon="inline-start" />
+                Add deliverable
+              </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              {deliverableCount > 0
-                ? `${deliverableDoneCount} of ${deliverableCount} done · ${derivedProgress}% — driven by deliverables`
-                : "No deliverables yet — starts at 0%."}
-            </p>
+            {errors.deliverables ? (
+              <p className="text-xs text-destructive">
+                Every deliverable needs a name and a due date.
+              </p>
+            ) : null}
           </div>
-        </div>
+        ) : null}
 
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
