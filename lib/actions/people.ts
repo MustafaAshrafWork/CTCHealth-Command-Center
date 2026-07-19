@@ -1,10 +1,11 @@
 "use server";
 
-import { Prisma } from "@prisma/client";
+import { Prisma, type Person } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { db } from "@/lib/db";
+import { sanitizePerson } from "@/lib/sanitize-person";
 import {
   generatePassword,
   hashPassword,
@@ -24,13 +25,23 @@ import {
 
 const SIGN_IN_REQUIRED = "You must be signed in to do that.";
 
+// Every page that renders people pickers.
+const PEOPLE_ROUTES = ["/projects", "/board", "/timeline", "/archived"] as const;
+
+function revalidateProjectRoutes(): void {
+  for (const route of PEOPLE_ROUTES) {
+    revalidatePath(route);
+  }
+  revalidatePath("/projects/[id]", "page");
+}
+
 async function requireSessionResult(): Promise<
-  | { ok: true; personId: string }
+  | { ok: true; personId: string; isDemo: boolean }
   | { ok: false; code: "UNAUTHORIZED"; error: string }
 > {
   try {
     const session = await requireSession();
-    return { ok: true, personId: session.personId };
+    return { ok: true, personId: session.personId, isDemo: session.isDemo };
   } catch {
     return {
       ok: false,
@@ -162,6 +173,68 @@ export async function createPerson(
       ok: false,
       code: "ERROR",
       error: "Could not add the user. Try again.",
+    };
+  }
+}
+
+// Inline "Add «name»" from the assignee/owner/members pickers. Creates a
+// non-login Person so work can be assigned before the real account is seeded.
+export async function quickAddPerson(
+  name: unknown,
+): Promise<ActionResult<Person>> {
+  const session = await requireSessionResult();
+  if (!session.ok) {
+    return session;
+  }
+  if (session.isDemo) {
+    return {
+      ok: false,
+      code: "UNAUTHORIZED",
+      error: "The demo account can't add people.",
+    };
+  }
+
+  const parsed = personNameSchema.safeParse(
+    typeof name === "string" ? name.trim() : name,
+  );
+  if (!parsed.success) {
+    return { ok: false, code: "VALIDATION", error: "Enter a valid name." };
+  }
+
+  try {
+    const person = await db.person.create({
+      data: {
+        name: parsed.data,
+        active: true,
+        canLogin: false,
+      },
+    });
+
+    revalidateProjectRoutes();
+    return { ok: true, data: sanitizePerson(person) };
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const existing = await db.person.findUnique({
+        where: { name: parsed.data },
+      });
+      if (existing && existing.active && !existing.isDemo) {
+        // Name already exists — just select that person.
+        return { ok: true, data: sanitizePerson(existing) };
+      }
+      return {
+        ok: false,
+        code: "VALIDATION",
+        error: "That name already exists but can't be assigned.",
+      };
+    }
+
+    return {
+      ok: false,
+      code: "ERROR",
+      error: "Could not add the person. Try again.",
     };
   }
 }

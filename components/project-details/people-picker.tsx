@@ -1,14 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronsUpDown, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ChevronsUpDown, Plus, X } from "lucide-react";
+import { toast } from "sonner";
 import type { Person } from "@prisma/client";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Command,
-  CommandEmpty,
   CommandGroup,
   CommandInput,
   CommandItem,
@@ -19,7 +20,106 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { quickAddPerson } from "@/lib/actions/people";
 import { cn } from "@/lib/utils";
+
+// Merges people quick-added this session into the server-provided list so a
+// newly created person is selectable/visible before router.refresh() lands.
+export function mergePeople(people: Person[], added: Person[]): Person[] {
+  const extras = added.filter(
+    (person) => !people.some((existing) => existing.id === person.id),
+  );
+  if (extras.length === 0) {
+    return people;
+  }
+  return [...people, ...extras].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Searchable person list with an "Add «name»" option as the first item when
+// the query doesn't match an existing name. Creating persists the person for
+// everyone (Person with canLogin: false) via quickAddPerson.
+export function CreatablePersonCommand({
+  people,
+  placeholder,
+  isSelected,
+  onPick,
+  onCreated,
+}: {
+  people: Person[];
+  placeholder: string;
+  isSelected: (personId: string) => boolean;
+  onPick: (personId: string) => void;
+  onCreated: (person: Person) => void;
+}) {
+  const router = useRouter();
+  const [search, setSearch] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const query = search.trim();
+  const filtered = query
+    ? people.filter((person) =>
+        person.name.toLowerCase().includes(query.toLowerCase()),
+      )
+    : people;
+  const exactMatch = people.some(
+    (person) => person.name.toLowerCase() === query.toLowerCase(),
+  );
+  const showAdd = query.length > 0 && !exactMatch;
+
+  function handleCreate() {
+    if (!query || creating) {
+      return;
+    }
+    setCreating(true);
+    void quickAddPerson(query).then((result) => {
+      setCreating(false);
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      setSearch("");
+      onCreated(result.data);
+      router.refresh();
+    });
+  }
+
+  return (
+    <Command shouldFilter={false}>
+      <CommandInput
+        placeholder={placeholder}
+        value={search}
+        onValueChange={setSearch}
+      />
+      <CommandList>
+        <CommandGroup>
+          {showAdd ? (
+            <CommandItem
+              value={`__add__:${query}`}
+              disabled={creating}
+              onSelect={handleCreate}
+            >
+              <Plus />
+              Add &ldquo;{query}&rdquo;
+            </CommandItem>
+          ) : null}
+          {filtered.map((person) => (
+            <CommandItem
+              key={person.id}
+              value={person.id}
+              data-checked={isSelected(person.id)}
+              onSelect={() => onPick(person.id)}
+            >
+              {person.name}
+            </CommandItem>
+          ))}
+        </CommandGroup>
+        {!showAdd && filtered.length === 0 ? (
+          <p className="py-6 text-center text-sm">No people found.</p>
+        ) : null}
+      </CommandList>
+    </Command>
+  );
+}
 
 export function OwnerPicker({
   people,
@@ -33,7 +133,9 @@ export function OwnerPicker({
   invalid?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const selected = people.find((person) => person.id === value);
+  const [added, setAdded] = useState<Person[]>([]);
+  const merged = mergePeople(people, added);
+  const selected = merged.find((person) => person.id === value);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -51,27 +153,20 @@ export function OwnerPicker({
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 p-0">
-        <Command>
-          <CommandInput placeholder="Search people..." />
-          <CommandList>
-            <CommandEmpty>No people found.</CommandEmpty>
-            <CommandGroup>
-              {people.map((person) => (
-                <CommandItem
-                  key={person.id}
-                  value={person.name}
-                  data-checked={person.id === value}
-                  onSelect={() => {
-                    onChange(person.id);
-                    setOpen(false);
-                  }}
-                >
-                  {person.name}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
+        <CreatablePersonCommand
+          people={merged}
+          placeholder="Search or add people..."
+          isSelected={(personId) => personId === value}
+          onPick={(personId) => {
+            onChange(personId);
+            setOpen(false);
+          }}
+          onCreated={(person) => {
+            setAdded((prev) => [...prev, person]);
+            onChange(person.id);
+            setOpen(false);
+          }}
+        />
       </PopoverContent>
     </Popover>
   );
@@ -87,7 +182,9 @@ export function MembersPicker({
   onChange: (personIds: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const selected = people.filter((person) => value.includes(person.id));
+  const [added, setAdded] = useState<Person[]>([]);
+  const merged = mergePeople(people, added);
+  const selected = merged.filter((person) => value.includes(person.id));
 
   function toggle(personId: string) {
     if (value.includes(personId)) {
@@ -117,24 +214,18 @@ export function MembersPicker({
           </Button>
         </PopoverTrigger>
         <PopoverContent align="start" className="w-72 p-0">
-          <Command>
-            <CommandInput placeholder="Search people..." />
-            <CommandList>
-              <CommandEmpty>No people found.</CommandEmpty>
-              <CommandGroup>
-                {people.map((person) => (
-                  <CommandItem
-                    key={person.id}
-                    value={person.name}
-                    data-checked={value.includes(person.id)}
-                    onSelect={() => toggle(person.id)}
-                  >
-                    {person.name}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </CommandList>
-          </Command>
+          <CreatablePersonCommand
+            people={merged}
+            placeholder="Search or add people..."
+            isSelected={(personId) => value.includes(personId)}
+            onPick={toggle}
+            onCreated={(person) => {
+              setAdded((prev) => [...prev, person]);
+              if (!value.includes(person.id)) {
+                onChange([...value, person.id]);
+              }
+            }}
+          />
         </PopoverContent>
       </Popover>
 

@@ -8,14 +8,6 @@ import type { Milestone, Person } from "@prisma/client";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -30,6 +22,8 @@ import {
 } from "@/lib/actions/milestones";
 import { dateOnlyUTC } from "@/lib/health";
 import { cn } from "@/lib/utils";
+
+import { CreatablePersonCommand, mergePeople } from "./people-picker";
 
 function toDateInputValue(date: Date | string): string {
   const value = typeof date === "string" ? new Date(date) : date;
@@ -55,7 +49,11 @@ export function AssigneeChip({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const activePeople = people.filter((person) => person.active);
+  const [added, setAdded] = useState<Person[]>([]);
+  const activePeople = mergePeople(
+    people.filter((person) => person.active),
+    added,
+  );
   const selected = activePeople.find((person) => person.id === value);
 
   return (
@@ -75,27 +73,20 @@ export function AssigneeChip({
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-56 p-0">
-        <Command>
-          <CommandInput placeholder="Assign to..." />
-          <CommandList>
-            <CommandEmpty>No people found.</CommandEmpty>
-            <CommandGroup>
-              {activePeople.map((person) => (
-                <CommandItem
-                  key={person.id}
-                  value={person.name}
-                  data-checked={person.id === value}
-                  onSelect={() => {
-                    onChange(person.id);
-                    setOpen(false);
-                  }}
-                >
-                  {person.name}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
+        <CreatablePersonCommand
+          people={activePeople}
+          placeholder="Assign or add..."
+          isSelected={(personId) => personId === value}
+          onPick={(personId) => {
+            onChange(personId);
+            setOpen(false);
+          }}
+          onCreated={(person) => {
+            setAdded((prev) => [...prev, person]);
+            onChange(person.id);
+            setOpen(false);
+          }}
+        />
       </PopoverContent>
     </Popover>
   );
