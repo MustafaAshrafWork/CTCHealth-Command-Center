@@ -29,8 +29,9 @@ ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0
 
-# The Alpine better-sqlite3 binding links against libstdc++.
-RUN apk add --no-cache libstdc++ \
+# The Alpine better-sqlite3 binding links against libstdc++; su-exec lets the
+# root entrypoint chown the mounted volume and drop to the app user.
+RUN apk add --no-cache libstdc++ su-exec \
     && addgroup --system --gid 1001 nodejs \
     && adduser --system --uid 1001 --ingroup nodejs nextjs
 
@@ -52,7 +53,6 @@ RUN chmod 755 ./docker-entrypoint.sh \
     && test -f node_modules/.prisma/client/index.js \
     && test -f node_modules/better-sqlite3/build/Release/better_sqlite3.node
 
-USER nextjs
 EXPOSE 3000
 
 ENTRYPOINT ["./docker-entrypoint.sh"]
