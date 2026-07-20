@@ -141,7 +141,7 @@ describe("project creation authorization", () => {
     ).resolves.toEqual({ ok: true });
   });
 
-  it("requires an administrator to create for another owner", async () => {
+  it("allows a non-admin manager to create a project for another owner", async () => {
     mocks.findPerson.mockResolvedValue({
       active: true,
       canLogin: true,
@@ -149,9 +149,9 @@ describe("project creation authorization", () => {
       isDemo: false,
     });
 
-    const result = await authorizeProjectCreation("owner-2", realSession);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe("UNAUTHORIZED");
+    await expect(
+      authorizeProjectCreation("owner-2", realSession),
+    ).resolves.toEqual({ ok: true });
   });
 
   it("does not let an inactive person use the self-owner shortcut", async () => {

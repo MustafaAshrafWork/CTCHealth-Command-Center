@@ -8,6 +8,7 @@ import {
   Archive,
   Calendar,
   ChartNoAxesCombined,
+  Lightbulb,
   Menu,
 } from "lucide-react";
 
@@ -31,6 +32,7 @@ const NAV_PERSISTED_PARAM_KEYS = [
 const PRIMARY_NAV_ITEMS = [
   { href: "/timeline", label: "Timeline", icon: Calendar },
   { href: "/leadership", label: "Leadership", icon: ChartNoAxesCombined },
+  { href: "/ideas", label: "Ideas", icon: Lightbulb },
 ] as const;
 
 const SECONDARY_NAV_ITEMS = [

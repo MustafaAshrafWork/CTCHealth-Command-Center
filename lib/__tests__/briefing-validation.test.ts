@@ -65,6 +65,47 @@ describe("briefing project validation", () => {
       false,
     );
   });
+
+  it("accepts a positive budget, a null budget, or an omitted budget", () => {
+    expect(projectInputSchema.safeParse({ ...project, budget: 1_000 }).success).toBe(
+      true,
+    );
+    expect(projectInputSchema.safeParse({ ...project, budget: null }).success).toBe(
+      true,
+    );
+    expect(projectInputSchema.safeParse(project).success).toBe(true);
+  });
+
+  it("rejects a negative or non-finite budget", () => {
+    expect(projectInputSchema.safeParse({ ...project, budget: -1 }).success).toBe(
+      false,
+    );
+    expect(
+      projectInputSchema.safeParse({ ...project, budget: Number.NaN }).success,
+    ).toBe(false);
+  });
+
+  it.each(["2026-02-31", "2025-02-29", "2026-13-01", "2026-00-10"])(
+    "rejects an impossible calendar date %s for startDate and endDate",
+    (invalidDate) => {
+      expect(
+        projectInputSchema.safeParse({ ...project, startDate: invalidDate }).success,
+      ).toBe(false);
+      expect(
+        projectInputSchema.safeParse({ ...project, endDate: invalidDate }).success,
+      ).toBe(false);
+    },
+  );
+
+  it("accepts a valid leap-day date", () => {
+    expect(
+      projectInputSchema.safeParse({
+        ...project,
+        startDate: "2028-02-29",
+        endDate: "2028-02-29",
+      }).success,
+    ).toBe(true);
+  });
 });
 
 describe("SharePoint link validation", () => {

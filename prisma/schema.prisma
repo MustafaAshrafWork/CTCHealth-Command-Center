@@ -37,6 +37,7 @@ model Project {
   ownerId        String
   owner          Person          @relation("ProjectOwner", fields: [ownerId], references: [id])
   progress       Int
+  budget         Float?
   completed      Boolean         @default(false)
   archived       Boolean         @default(false)
   startDate      DateTime

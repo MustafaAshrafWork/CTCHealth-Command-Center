@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -105,6 +106,7 @@ export function PortfolioControls({
   counts,
   owner,
   ownerOptions,
+  showCompleted,
   sort,
 }: {
   attention: PortfolioAttention;
@@ -115,13 +117,19 @@ export function PortfolioControls({
   counts: PortfolioCounts;
   owner: string | null;
   ownerOptions: Option[];
+  showCompleted: boolean;
   sort: PortfolioSort;
 }) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
   const hasActiveControls = Boolean(
-    client || owner || category || attention !== "active" || sort !== "priority",
+    client ||
+      owner ||
+      category ||
+      attention !== "active" ||
+      sort !== "priority" ||
+      !showCompleted,
   );
 
   function replaceParam(key: string, value: string | null) {
@@ -241,6 +249,19 @@ export function PortfolioControls({
               </SelectContent>
             </Select>
           </label>
+
+          <div className="grid gap-1 text-xs font-medium text-muted-foreground">
+            <span>Completed</span>
+            <label className="flex h-8 items-center gap-2 rounded-lg border border-input bg-transparent px-2.5 text-sm font-normal text-foreground">
+              <Checkbox
+                checked={showCompleted}
+                onCheckedChange={(checked) =>
+                  replaceParam("completed", checked === true ? null : "hide")
+                }
+              />
+              Show completed
+            </label>
+          </div>
         </div>
 
         <div className="flex items-end gap-2">
@@ -256,6 +277,7 @@ export function PortfolioControls({
                 next.delete("category");
                 next.delete("attention");
                 next.delete("sort");
+                next.delete("completed");
                 const query = next.toString();
                 router.replace(query ? `${pathname}?${query}` : pathname, {
                   scroll: false,

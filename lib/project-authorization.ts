@@ -83,7 +83,7 @@ export async function authorizeProjectMutation(
 }
 
 export async function authorizeProjectCreation(
-  ownerId: string,
+  _ownerId: string,
   session: ProjectMutationSession,
 ): Promise<ProjectCreationAccess> {
   const actor = await db.person.findUnique({
@@ -103,13 +103,8 @@ export async function authorizeProjectCreation(
     };
   }
 
-  if (session.isDemo || ownerId === session.personId || actor.isAdmin) {
-    return { ok: true };
-  }
-
-  return {
-    ok: false,
-    code: "UNAUTHORIZED",
-    error: "Only an administrator can create a project for another owner.",
-  };
+  // Pilot scope: every active, login-enabled manager may create a project
+  // for any owner in their real/demo partition. `assertRealPeople` still
+  // vets the target owner's active/real status before the write happens.
+  return { ok: true };
 }

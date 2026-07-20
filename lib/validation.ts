@@ -4,6 +4,45 @@ const requiredText = (maximumLength: number) =>
   z.string().trim().min(1).max(maximumLength);
 const nonEmptyText = z.string().trim().min(1);
 
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Parses a `YYYY-MM-DD` string as a real calendar date at UTC midnight.
+ * `Date` silently normalizes impossible dates (e.g. `2026-02-31` becomes
+ * March 3rd), so this rejects any input whose parsed date does not
+ * serialize back to the exact input string — that is the only reliable
+ * way to catch invalid days, months, and non-leap Feb 29ths.
+ */
+export function parseStrictISODate(value: string): Date | null {
+  if (!ISO_DATE_PATTERN.test(value)) {
+    return null;
+  }
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+    return null;
+  }
+  return date;
+}
+
+const INVALID_CALENDAR_DATE_MESSAGE =
+  "Enter a valid calendar date in YYYY-MM-DD format.";
+
+// Accepts a `Date` (already normalized by the browser form) or a strict
+// `YYYY-MM-DD` string (as sent by the chat confirmation flow) and rejects
+// impossible calendar dates instead of silently rolling them over.
+export const strictCalendarDateSchema = z
+  .union([z.date(), z.string()])
+  .refine(
+    (value) =>
+      value instanceof Date
+        ? !Number.isNaN(value.getTime())
+        : parseStrictISODate(value) !== null,
+    { message: INVALID_CALENDAR_DATE_MESSAGE },
+  )
+  .transform((value) =>
+    value instanceof Date ? value : (parseStrictISODate(value as string) as Date),
+  );
+
 export const idSchema = z.string().trim().min(1);
 
 export const projectCategorySchema = z.enum([
@@ -87,9 +126,10 @@ const projectBaseFields = {
   ownerId: nonEmptyText,
   memberIds: z.array(nonEmptyText),
   progress: z.number().int().min(0).max(100).optional(),
+  budget: z.number().finite().nonnegative().nullable().optional(),
   completed: z.boolean().optional(),
-  startDate: z.coerce.date(),
-  endDate: z.coerce.date(),
+  startDate: strictCalendarDateSchema,
+  endDate: strictCalendarDateSchema,
   sharePointLink: optionalSharePointLink,
   notes: z.string().optional(),
 };

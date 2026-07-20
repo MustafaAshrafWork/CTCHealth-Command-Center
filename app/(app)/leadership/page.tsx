@@ -58,7 +58,6 @@ export default async function LeadershipPage({
     db.project.findMany({
       where: {
         archived: false,
-        completed: false,
         isDemo: session.isDemo,
       },
       include: {
@@ -79,6 +78,8 @@ export default async function LeadershipPage({
             name: true,
             client: true,
             ownerId: true,
+            completed: true,
+            archived: true,
           },
         },
       },
@@ -140,7 +141,9 @@ export default async function LeadershipPage({
     .filter((flag) =>
       selectedOwner
         ? flag.project.ownerId === selectedOwner.id
-        : flag.status === "open",
+        : flag.status === "open" &&
+          !flag.project.completed &&
+          !flag.project.archived,
     )
     .sort(
       (a, b) =>
@@ -206,7 +209,7 @@ export default async function LeadershipPage({
   } else {
     const rowsByClient = new Map<string, ClientHealthRow>();
 
-    for (const project of visibleRows) {
+    for (const project of visibleRows.filter((project) => !project.completed)) {
       const current = rowsByClient.get(project.client);
       const openBlockers = project.flags.filter(
         (flag) => flag.status === "open",

@@ -1,3 +1,4 @@
+import { ProjectChat } from "@/components/chat/project-chat";
 import { GanttChart, type GanttRow } from "@/components/gantt/gantt-chart";
 import {
   PortfolioControls,
@@ -5,7 +6,7 @@ import {
 } from "@/components/portfolio/portfolio-controls";
 import { NewProjectControl } from "@/components/portfolio/new-project-control";
 import { db } from "@/lib/db";
-import { computeHealth, dateOnlyUTC } from "@/lib/health";
+import { computeHealth, dateOnlyUTC, type Health } from "@/lib/health";
 import {
   isDueWithin30Days,
   parsePortfolioSort,
@@ -31,6 +32,7 @@ type TimelineSearchParams = {
   category?: SearchValue;
   attention?: SearchValue;
   sort?: SearchValue;
+  completed?: SearchValue;
 };
 
 function firstValue(value: SearchValue): string | undefined {
@@ -46,6 +48,39 @@ function parseAttention(value: SearchValue): PortfolioAttention {
     : "active";
 }
 
+// Default is ON (completed projects visible); "hide" opts out.
+function parseShowCompleted(value: SearchValue): boolean {
+  return firstValue(value) !== "hide";
+}
+
+// From the visible rows, find the client with the most critical + at-risk
+// projects. Ties break alphabetically for a stable pick.
+function findWorstClient(
+  rows: { client: string; health: Health }[],
+): string | null {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    if (row.health === "red" || row.health === "amber") {
+      counts.set(row.client, (counts.get(row.client) ?? 0) + 1);
+    }
+  }
+
+  let worstClient: string | null = null;
+  let worstCount = 0;
+  for (const [client, count] of counts) {
+    if (
+      count > worstCount ||
+      (count === worstCount &&
+        worstClient !== null &&
+        client.localeCompare(worstClient, "en", { sensitivity: "base" }) < 0)
+    ) {
+      worstClient = client;
+      worstCount = count;
+    }
+  }
+  return worstClient;
+}
+
 export default async function TimelinePage({
   searchParams,
 }: {
@@ -55,12 +90,12 @@ export default async function TimelinePage({
   const today = dateOnlyUTC(new Date());
   const sort = parsePortfolioSort(params.sort);
   const attention = parseAttention(params.attention);
+  const showCompleted = parseShowCompleted(params.completed);
 
   const [projects, people, actor] = await Promise.all([
     db.project.findMany({
       where: {
         archived: false,
-        completed: false,
         isDemo: session.isDemo,
       },
       include: {
@@ -112,6 +147,7 @@ export default async function TimelinePage({
     .filter((project) => !client || project.client === client)
     .filter((project) => !owner || project.ownerId === owner)
     .filter((project) => !category || project.category === category)
+    .filter((project) => showCompleted || !project.completed)
     .map((project) => ({
       id: project.id,
       name: project.name,
@@ -142,7 +178,7 @@ export default async function TimelinePage({
     }));
 
   const counts = {
-    active: scopedRows.length,
+    active: scopedRows.filter((project) => !project.completed).length,
     critical: scopedRows.filter((project) => project.health === "red").length,
     risk: scopedRows.filter((project) => project.health === "amber").length,
     due30: scopedRows.filter((project) => isDueWithin30Days(project, today))
@@ -162,6 +198,7 @@ export default async function TimelinePage({
     }
   });
   const rows = sortPortfolioRows(attentionRows, sort);
+  const worstClient = findWorstClient(scopedRows);
 
   return (
     <div className="flex min-h-0 flex-col gap-4">
@@ -184,6 +221,7 @@ export default async function TimelinePage({
         <p className="text-sm font-medium text-foreground">
           {counts.critical} critical, {counts.risk} at risk, and {counts.due30} due
           within 30 days.
+          {worstClient ? ` ${worstClient} needs the most attention.` : ""}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           Due ≤30 days is upcoming only: project end dates from today through 30
@@ -200,10 +238,12 @@ export default async function TimelinePage({
         counts={counts}
         owner={owner}
         ownerOptions={ownerOptions}
+        showCompleted={showCompleted}
         sort={sort}
       />
 
       <GanttChart rows={rows} />
+      <ProjectChat />
     </div>
   );
 }

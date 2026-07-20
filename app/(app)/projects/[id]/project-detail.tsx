@@ -19,6 +19,7 @@ import { DetailsTab } from "@/components/project-details/details-tab";
 import { MilestoneSection } from "@/components/project-details/milestone-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { WeeklyUpdateCompose } from "@/components/weekly-updates/weekly-update-compose";
 import { WeeklyUpdateHistory } from "@/components/weekly-updates/weekly-update-history";
 import { setArchived } from "@/lib/actions/projects";
 import type { ProjectWithRelations } from "@/lib/actions/projects";
@@ -58,11 +59,13 @@ export function ProjectDetail({
   people,
   health,
   canEdit,
+  canLogWeeklyUpdate,
 }: {
   project: ProjectDetailData;
   people: Person[];
   health: Health;
   canEdit: boolean;
+  canLogWeeklyUpdate: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -200,6 +203,11 @@ export function ProjectDetail({
             flags={project.flags}
             canEdit={canEdit}
           />
+          {canLogWeeklyUpdate ? (
+            <div className="flex justify-end">
+              <WeeklyUpdateCompose projectId={project.id} />
+            </div>
+          ) : null}
           <WeeklyUpdateHistory
             updates={project.weeklyUpdates.map((update) => ({
               id: update.id,

@@ -1,11 +1,18 @@
 "use client";
 
-import { differenceInCalendarDays } from "date-fns";
 import { Flag, Pencil } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+  buildDateAxis,
+  clampPct,
+  groupMonths,
+  pctFor,
+  type DateAxis,
+  type HeaderCell,
+} from "@/lib/gantt-axis";
 import { dateOnlyUTC, healthLabel, type Health } from "@/lib/health";
 import { cn } from "@/lib/utils";
 
@@ -85,11 +92,6 @@ const CATEGORY_LABEL: Record<string, string> = {
   agents: "Agents",
 };
 
-const monthLabel = new Intl.DateTimeFormat("en-US", {
-  timeZone: "UTC",
-  month: "short",
-});
-
 const dateLabel = new Intl.DateTimeFormat("en-US", {
   timeZone: "UTC",
   month: "short",
@@ -105,134 +107,26 @@ const ZOOM_OPTIONS: { id: Zoom; label: string }[] = [
   { id: "months", label: "Months" },
 ];
 
-type MonthCell = {
-  startMs: number;
-  widthPct: number;
-  label: string;
-};
-
-type HeaderCell = {
-  key: number;
-  label: string;
-  leftPct: number;
-  widthPct: number;
-};
-
-type Axis = {
-  axisStartMs: number;
-  axisEndMs: number;
-  totalDays: number;
-  months: MonthCell[];
-  today: Date;
-};
+type Axis = DateAxis & { today: Date };
 
 function buildAxis(rows: GanttRow[]): Axis {
   const today = dateOnlyUTC(new Date());
 
-  const milestoneTimeMs = rows.flatMap((row) =>
-    row.milestones.flatMap((milestone) => [
-      new Date(milestone.startDate).getTime(),
-      new Date(milestone.endDate).getTime(),
+  const values: (Date | string | number)[] = rows.flatMap((row) => [
+    row.startDate,
+    row.endDate,
+    ...row.milestones.flatMap((milestone) => [
+      milestone.startDate,
+      milestone.endDate,
     ]),
-  );
+  ]);
+  values.push(today);
 
-  const startTimeMs = [
-    ...rows.map((row) => new Date(row.startDate).getTime()),
-    ...milestoneTimeMs,
-    today.getTime(),
-  ];
-  const endTimeMs = [
-    ...rows.map((row) => new Date(row.endDate).getTime()),
-    ...milestoneTimeMs,
-    today.getTime(),
-  ];
-
-  const minStart = new Date(Math.min(...startTimeMs));
-  const maxEnd = new Date(Math.max(...endTimeMs));
-
-  const axisStartMs = Date.UTC(
-    minStart.getUTCFullYear(),
-    minStart.getUTCMonth(),
-    1,
-  );
-  const axisEndMs = Date.UTC(
-    maxEnd.getUTCFullYear(),
-    maxEnd.getUTCMonth() + 1,
-    1,
-  );
-
-  const totalDays = differenceInCalendarDays(
-    new Date(axisEndMs),
-    new Date(axisStartMs),
-  );
-
-  const months: MonthCell[] = [];
-  let year = new Date(axisStartMs).getUTCFullYear();
-  let month = new Date(axisStartMs).getUTCMonth();
-  let cursor = axisStartMs;
-  while (cursor < axisEndMs) {
-    const nextYear = month + 1 === 12 ? year + 1 : year;
-    const nextMonth = month + 1 === 12 ? 0 : month + 1;
-    const nextMs = Date.UTC(nextYear, nextMonth, 1);
-    const widthPct =
-      (differenceInCalendarDays(new Date(nextMs), new Date(cursor)) /
-        totalDays) *
-      100;
-    months.push({
-      startMs: cursor,
-      widthPct,
-      label: monthLabel.format(new Date(cursor)),
-    });
-    year = nextYear;
-    month = nextMonth;
-    cursor = nextMs;
-  }
-
-  return { axisStartMs, axisEndMs, totalDays, months, today };
-}
-
-function pctFor(ms: number, axisStartMs: number, totalDays: number): number {
-  return (
-    (differenceInCalendarDays(new Date(ms), new Date(axisStartMs)) / totalDays) *
-    100
-  );
-}
-
-function clampPct(v: number): number {
-  if (v < 0) return 0;
-  if (v > 100) return 100;
-  return v;
+  return { ...buildDateAxis(values), today };
 }
 
 function formatUtcDate(ms: number): string {
   return dateLabel.format(new Date(ms));
-}
-
-// Merge month cells into spans that share a group key (year or quarter).
-function groupMonths(
-  months: MonthCell[],
-  axisStartMs: number,
-  totalDays: number,
-  keyOf: (d: Date) => string,
-): HeaderCell[] {
-  const cells: HeaderCell[] = [];
-  let currentKey: string | null = null;
-  for (const m of months) {
-    const key = keyOf(new Date(m.startMs));
-    const last = cells[cells.length - 1];
-    if (last && key === currentKey) {
-      last.widthPct += m.widthPct;
-    } else {
-      cells.push({
-        key: m.startMs,
-        label: key,
-        leftPct: pctFor(m.startMs, axisStartMs, totalDays),
-        widthPct: m.widthPct,
-      });
-      currentKey = key;
-    }
-  }
-  return cells;
 }
 
 export function GanttChart({ rows }: { rows: GanttRow[] }) {
@@ -461,7 +355,10 @@ export function GanttChart({ rows }: { rows: GanttRow[] }) {
               return (
                 <div
                   key={row.id}
-                  className="group relative flex border-t border-border/50"
+                  className={cn(
+                    "group relative flex border-t border-border/50",
+                    row.completed && "opacity-60",
+                  )}
                   style={{ height: ROW_HEIGHT }}
                 >
                   {/* Sticky portfolio columns */}

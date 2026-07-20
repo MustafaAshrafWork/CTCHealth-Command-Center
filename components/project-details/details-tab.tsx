@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
@@ -25,6 +25,7 @@ import {
 import { createProject, updateProject } from "@/lib/actions/projects";
 import type { ProjectWithRelations } from "@/lib/actions/projects";
 import { dateOnlyUTC } from "@/lib/health";
+import { shouldShowStaleEditBanner } from "@/lib/optimistic-lock";
 import { projectCreateSchema, projectInputSchema } from "@/lib/validation";
 
 import { AssigneeChip } from "./deliverables-section";
@@ -50,11 +51,16 @@ type FormState = {
   category: string;
   ownerId: string;
   progress: number;
+  budget: string;
   completed: boolean;
   startDate: string;
   endDate: string;
   sharePointLink: string;
   deliverables: DeliverableDraft[];
+  // The project `version` these field values are based on. Frozen alongside
+  // the fields (same useState) so a live prop refresh can never advance the
+  // version out from under stale, unsaved field values.
+  baseVersion: number | null;
 };
 
 function todayInputValue(): string {
@@ -74,11 +80,13 @@ function defaultState(currentPersonId?: string): FormState {
     category: "tech",
     ownerId: currentPersonId ?? "",
     progress: 0,
+    budget: "",
     completed: false,
     startDate: today,
     endDate: today,
     sharePointLink: "",
     deliverables: [],
+    baseVersion: null,
   };
 }
 
@@ -89,11 +97,13 @@ function stateFromProject(project: ProjectWithRelations): FormState {
     category: project.category,
     ownerId: project.ownerId,
     progress: project.progress,
+    budget: project.budget === null ? "" : String(project.budget),
     completed: project.completed,
     startDate: toDateInputValue(project.startDate),
     endDate: toDateInputValue(project.endDate),
     sharePointLink: project.sharePointLink ?? "",
     deliverables: [],
+    baseVersion: project.version,
   };
 }
 
@@ -130,6 +140,11 @@ export function DetailsTab({
   const [state, setState] = useState<FormState>(() =>
     project ? stateFromProject(project) : defaultState(currentPersonId),
   );
+  // Immutable snapshot of `state` as of the last seed/reload, used only to
+  // detect whether the user has typed anything since then. Never re-derived
+  // from props — only replaced wholesale by `reloadFromLatest`.
+  const [snapshot, setSnapshot] = useState<FormState>(state);
+  const [conflict, setConflict] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
   const [resetSignal, setResetSignal] = useState(0);
@@ -137,12 +152,33 @@ export function DetailsTab({
   const router = useRouter();
   const mutation = useMutationStatus();
   const formDisabled = isPending || !canEdit;
+  const dirty = useMemo(
+    () => JSON.stringify(state) !== JSON.stringify(snapshot),
+    [state, snapshot],
+  );
+  const showStaleBanner = shouldShowStaleEditBanner({
+    baseVersion: state.baseVersion,
+    liveVersion: project?.version ?? null,
+    dirty,
+    conflict,
+  });
 
   useEffect(() => {
     if (resetSignal > 0) {
       nameRef.current?.focus();
     }
   }, [resetSignal]);
+
+  function reloadFromLatest() {
+    if (!project) {
+      return;
+    }
+    const fresh = stateFromProject(project);
+    setState(fresh);
+    setSnapshot(fresh);
+    setConflict(false);
+    setErrors({});
+  }
 
   function buildPayload(values: FormState) {
     return {
@@ -157,6 +193,7 @@ export function DetailsTab({
       memberIds:
         project?.members.map((member) => member.personId) ?? [],
       progress: values.progress,
+      budget: values.budget.trim() === "" ? null : Number(values.budget),
       completed: values.completed,
       startDate: dateOnlyUTC(new Date(values.startDate)),
       endDate: dateOnlyUTC(new Date(values.endDate)),
@@ -204,11 +241,14 @@ export function DetailsTab({
         const result =
           mode === "new"
             ? await createProject(parsed.data)
-            : await updateProject(project!.id, project!.version, parsed.data);
+            : await updateProject(project!.id, state.baseVersion!, parsed.data);
 
         if (!result.ok) {
           toast.error(result.error);
           mutation.failed(result.error, result.code === "CONFLICT");
+          if (result.code === "CONFLICT") {
+            setConflict(true);
+          }
           return;
         }
 
@@ -230,6 +270,17 @@ export function DetailsTab({
           return;
         }
 
+        // The save just committed exactly what's in `state`; resync the
+        // frozen baseline to the new version so a subsequent prop refresh
+        // (e.g. from router.refresh() below) isn't mistaken for a remote
+        // conflict against our own successful save.
+        setConflict(false);
+        const savedState: FormState = {
+          ...state,
+          baseVersion: result.data.version,
+        };
+        setState(savedState);
+        setSnapshot(savedState);
         onClose();
       } catch {
         const message =
@@ -254,6 +305,23 @@ export function DetailsTab({
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
         {mode === "edit" && project?.archived ? (
           <Badge variant="secondary">Archived</Badge>
+        ) : null}
+
+        {showStaleBanner ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            <span>
+              This record changed elsewhere. Reload to get the latest (your
+              unsaved edits will be replaced).
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={reloadFromLatest}
+            >
+              Reload
+            </Button>
+          </div>
         ) : null}
 
         <div className="space-y-1.5">
@@ -530,6 +598,29 @@ export function DetailsTab({
               Set manually by the project owner; milestones do not calculate it.
             </p>
           )}
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="project-budget">Budget (CHF)</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              id="project-budget"
+              type="number"
+              min={0}
+              step="0.01"
+              placeholder="Unknown"
+              value={state.budget}
+              disabled={formDisabled}
+              aria-invalid={Boolean(errors.budget)}
+              onChange={(event) =>
+                setState((prev) => ({ ...prev, budget: event.target.value }))
+              }
+            />
+            <span className="text-sm text-muted-foreground">CHF</span>
+          </div>
+          {errors.budget ? (
+            <p className="text-xs text-destructive">{errors.budget}</p>
+          ) : null}
         </div>
 
         <div className="space-y-1.5">

@@ -64,6 +64,9 @@ export default async function ProjectDetailPage({
   const canEdit = Boolean(
     session.isDemo || actor?.isAdmin || project.ownerId === session.personId,
   );
+  const canLogWeeklyUpdate = Boolean(
+    session.isDemo || project.ownerId === session.personId,
+  );
 
   return (
     <ProjectDetail
@@ -71,6 +74,7 @@ export default async function ProjectDetailPage({
       people={people.map(sanitizePerson)}
       health={health}
       canEdit={canEdit}
+      canLogWeeklyUpdate={canLogWeeklyUpdate}
     />
   );
 }
