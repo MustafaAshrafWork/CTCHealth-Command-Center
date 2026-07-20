@@ -6,9 +6,9 @@ import { Copy, KeyRound, LogOut, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 import { createPerson, logout } from "@/lib/actions/people";
-import { IdeaDialog } from "@/components/ideas/idea-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { MobileNavigation } from "@/components/shell/sidebar";
 import {
   Dialog,
   DialogContent,
@@ -29,11 +29,9 @@ import { Label } from "@/components/ui/label";
 
 const PAGE_TITLES: Record<string, string> = {
   "/projects": "Projects",
-  "/board": "Board",
   "/timeline": "Timeline",
-  "/ideas": "Ideas",
+  "/leadership": "Leadership",
   "/archived": "Archived",
-  "/changelog": "Changelog",
 };
 
 function titleForPath(pathname: string): string {
@@ -199,20 +197,15 @@ export function Topbar({
   const [isPending, startTransition] = useTransition();
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
-      <h1 className="min-w-0 truncate text-sm font-medium text-foreground">
-        {titleForPath(pathname)}
-      </h1>
+    <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-2 sm:px-4">
+      <div className="flex min-w-0 items-center gap-1 sm:gap-2">
+        <MobileNavigation />
+        <h1 className="min-w-0 truncate text-sm font-medium text-foreground">
+          {titleForPath(pathname)}
+        </h1>
+      </div>
 
       <div className="flex shrink-0 items-center gap-3">
-        <IdeaDialog
-          trigger={
-            <Button variant="outline" size="sm">
-              Submit your ideas
-            </Button>
-          }
-        />
-
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -220,11 +213,12 @@ export function Topbar({
               size="sm"
               className="gap-2 px-1.5"
               disabled={isPending}
+              aria-label={`Account menu for ${userName}`}
             >
               <Avatar size="sm">
                 <AvatarFallback>{initialsFor(userName)}</AvatarFallback>
               </Avatar>
-              <span className="max-w-[10rem] truncate text-sm text-foreground">
+              <span className="hidden max-w-[10rem] truncate text-sm text-foreground sm:inline">
                 {userName}
               </span>
             </Button>

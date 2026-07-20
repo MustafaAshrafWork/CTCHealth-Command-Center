@@ -7,6 +7,10 @@ import { z } from "zod";
 
 import { db } from "@/lib/db";
 import { dateOnlyUTC } from "@/lib/health";
+import {
+  authorizeProjectCreation,
+  authorizeProjectMutation,
+} from "@/lib/project-authorization";
 import { sanitizePerson } from "@/lib/sanitize-person";
 import { requireSession } from "@/lib/session";
 import type { ActionResult } from "@/lib/types";
@@ -34,7 +38,13 @@ const projectVersionRefSchema = z.object({
 
 export type ProjectVersionRef = z.infer<typeof projectVersionRefSchema>;
 
-const PROJECT_ROUTES = ["/projects", "/board", "/timeline", "/archived"] as const;
+const PROJECT_ROUTES = [
+  "/projects",
+  "/board",
+  "/timeline",
+  "/leadership",
+  "/archived",
+] as const;
 
 const projectInclude = {
   owner: true,
@@ -51,6 +61,19 @@ function revalidateProjectRoutes(): void {
   }
   // Detail pages render project fields and optimistic-lock versions too.
   revalidatePath("/projects/[id]", "page");
+}
+
+function normalizeSharePointLink(
+  value: string | undefined,
+): string | null | undefined {
+  return value === "" ? null : value;
+}
+
+function synchronizeLegacyStatus(status: ProjectStatus, completed: boolean): ProjectStatus {
+  if (completed) {
+    return "completed";
+  }
+  return status === "completed" ? "active" : status;
 }
 
 function sanitizeProjectResult(
@@ -75,7 +98,7 @@ async function assertRealPeople(
   }
   const people = await db.person.findMany({
     where: { id: { in: ids } },
-    select: { id: true, isDemo: true },
+    select: { id: true, active: true, isDemo: true },
   });
 
   if (people.length !== ids.length) {
@@ -86,6 +109,13 @@ async function assertRealPeople(
     return {
       ok: false,
       error: "Demo people cannot be assigned to real projects.",
+    };
+  }
+
+  if (people.some((person) => !person.active)) {
+    return {
+      ok: false,
+      error: "Owners, members, and milestone assignees must be active people.",
     };
   }
 
@@ -125,7 +155,21 @@ export async function createProject(
     };
   }
 
-  const { memberIds, deliverables, startDate, endDate, ...rest } = parsed.data;
+  const {
+    memberIds,
+    deliverables,
+    startDate,
+    endDate,
+    progress = 0,
+    completed,
+    sharePointLink,
+    ...rest
+  } = parsed.data;
+  const isCompleted = completed ?? rest.status === "completed";
+  const access = await authorizeProjectCreation(rest.ownerId, session);
+  if (!access.ok) {
+    return access;
+  }
   // The owner is never duplicated into the member list.
   const uniqueMemberIds = Array.from(new Set(memberIds)).filter(
     (personId) => personId !== rest.ownerId,
@@ -134,13 +178,13 @@ export async function createProject(
   // The form defaults the owner to the session user; that self-ownership is
   // always allowed (demo included), so only check other people. Deliverable
   // assignees get the same vetting.
-  const assigneeIds = deliverables.flatMap((deliverable) =>
-    deliverable.assigneeId ? [deliverable.assigneeId] : [],
+  const assigneeIds = deliverables.map(
+    (deliverable) => deliverable.assigneeId ?? rest.ownerId,
   );
   const idsToCheck = [
     ...(rest.ownerId === session.personId ? [] : [rest.ownerId]),
     ...uniqueMemberIds,
-    ...assigneeIds.filter((personId) => personId !== session.personId),
+    ...assigneeIds,
   ];
   const peopleCheck = await assertRealPeople(idsToCheck);
   if (!peopleCheck.ok) {
@@ -150,9 +194,12 @@ export async function createProject(
   const project = await db.project.create({
     data: {
       ...rest,
-      progress: 0,
+      status: synchronizeLegacyStatus(rest.status, isCompleted),
+      progress,
+      completed: isCompleted,
       startDate: dateOnlyUTC(startDate),
       endDate: dateOnlyUTC(endDate),
+      sharePointLink: normalizeSharePointLink(sharePointLink),
       isDemo: session.isDemo,
       createdById: session.personId,
       updatedById: session.personId,
@@ -160,13 +207,20 @@ export async function createProject(
         create: uniqueMemberIds.map((personId) => ({ personId })),
       },
       milestones: {
-        create: deliverables.map((deliverable) => ({
-          name: deliverable.name,
-          dueDate: dateOnlyUTC(deliverable.dueDate),
-          done: false,
-          assigneeId: deliverable.assigneeId ?? null,
-          updatedById: session.personId,
-        })),
+        create: deliverables.map((deliverable) => {
+          const endDate = dateOnlyUTC(
+            deliverable.endDate ?? deliverable.dueDate!,
+          );
+          return {
+            name: deliverable.name,
+            startDate: dateOnlyUTC(deliverable.startDate ?? endDate),
+            endDate,
+            dueDate: endDate,
+            done: false,
+            assigneeId: deliverable.assigneeId ?? rest.ownerId,
+            updatedById: session.personId,
+          };
+        }),
       },
     },
     include: projectInclude,
@@ -192,6 +246,11 @@ export async function updateProject(
   }
   id = parsedId.data;
 
+  const access = await authorizeProjectMutation(id, session);
+  if (!access.ok) {
+    return access;
+  }
+
   const parsed = projectInputSchema.safeParse(input);
   if (!parsed.success) {
     return {
@@ -201,25 +260,39 @@ export async function updateProject(
     };
   }
 
-  const { memberIds, startDate, endDate, ...rest } = parsed.data;
+  const {
+    memberIds,
+    startDate,
+    endDate,
+    progress,
+    completed,
+    sharePointLink,
+    ...rest
+  } = parsed.data;
+  const isCompleted = completed ?? rest.status === "completed";
   const uniqueMemberIds = Array.from(new Set(memberIds)).filter(
     (personId) => personId !== rest.ownerId,
   );
 
-  const peopleCheck = await assertRealPeople([rest.ownerId, ...uniqueMemberIds]);
+  const peopleCheck = await assertRealPeople([
+    ...(rest.ownerId === session.personId ? [] : [rest.ownerId]),
+    ...uniqueMemberIds,
+  ]);
   if (!peopleCheck.ok) {
     return { ok: false, code: "VALIDATION", error: peopleCheck.error };
   }
 
   const updated = await db.$transaction(async (tx) => {
-    // Progress is derived from deliverables server-side
-    // (lib/actions/milestones.ts); the details form no longer owns it.
     const updateResult = await tx.project.updateMany({
-      where: { id, version, isDemo: session.isDemo },
+      where: { id, version, ...access.projectWhere },
       data: {
         ...rest,
+        status: synchronizeLegacyStatus(rest.status, isCompleted),
+        ...(progress === undefined ? {} : { progress }),
+        completed: isCompleted,
         startDate: dateOnlyUTC(startDate),
         endDate: dateOnlyUTC(endDate),
+        sharePointLink: normalizeSharePointLink(sharePointLink),
         version: { increment: 1 },
         updatedById: session.personId,
       },
@@ -273,15 +346,21 @@ export async function setProjectStatus(
   }
   id = parsedId.data;
 
+  const access = await authorizeProjectMutation(id, session);
+  if (!access.ok) {
+    return access;
+  }
+
   const parsed = projectStatusSchema.safeParse(status);
   if (!parsed.success) {
     return { ok: false, code: "VALIDATION", error: "Invalid project status." };
   }
 
   const updateResult = await db.project.updateMany({
-    where: { id, version, isDemo: session.isDemo },
+    where: { id, version, ...access.projectWhere },
     data: {
       status: parsed.data,
+      completed: parsed.data === "completed",
       version: { increment: 1 },
       updatedById: session.personId,
     },
@@ -306,6 +385,66 @@ export async function setProjectStatus(
   return { ok: true, data: { ...project, status: parsed.data } };
 }
 
+export async function setProjectCompleted(
+  id: string,
+  version: number,
+  completed: unknown,
+): Promise<ActionResult<{ id: string; version: number; completed: boolean }>> {
+  const session = await requireSessionResult();
+  if (!session.ok) {
+    return session;
+  }
+
+  const parsedId = idSchema.safeParse(id);
+  const parsedCompleted = z.boolean().safeParse(completed);
+  if (!parsedId.success || !parsedCompleted.success) {
+    return {
+      ok: false,
+      code: "VALIDATION",
+      error: "Invalid project completion update.",
+    };
+  }
+  id = parsedId.data;
+
+  const access = await authorizeProjectMutation(id, session);
+  if (!access.ok) {
+    return access;
+  }
+
+  const project = await db.project.findUnique({
+    where: { id, isDemo: session.isDemo },
+    select: { status: true },
+  });
+  if (!project) {
+    return { ok: false, code: "NOT_FOUND", error: "Project not found." };
+  }
+
+  const updateResult = await db.project.updateMany({
+    where: { id, version, ...access.projectWhere },
+    data: {
+      completed: parsedCompleted.data,
+      status: parsedCompleted.data
+        ? "completed"
+        : project.status === "completed"
+          ? "active"
+          : project.status,
+      version: { increment: 1 },
+      updatedById: session.personId,
+    },
+  });
+
+  if (updateResult.count === 0) {
+    return { ok: false, code: "CONFLICT", error: CONFLICT_MESSAGE };
+  }
+
+  revalidateProjectRoutes();
+  const updated = await db.project.findUniqueOrThrow({
+    where: { id },
+    select: { id: true, version: true, completed: true },
+  });
+  return { ok: true, data: updated };
+}
+
 export async function setArchived(
   projects: ProjectVersionRef[],
   archived: boolean,
@@ -320,12 +459,41 @@ export async function setArchived(
     return { ok: false, code: "VALIDATION", error: "Select at least one project." };
   }
 
-  const results = await Promise.all(
+  const accessResults = await Promise.all(
     parsedProjects.data.map((project) =>
+      authorizeProjectMutation(project.id, session),
+    ),
+  );
+  const deniedAccess = accessResults.find((access) => !access.ok);
+  if (deniedAccess && !deniedAccess.ok) {
+    return deniedAccess;
+  }
+
+  const authorizedProjects = parsedProjects.data.map((project, index) => {
+    const access = accessResults[index]!;
+    if (!access.ok) {
+      throw new Error("Project authorization changed unexpectedly.");
+    }
+    return { project, projectWhere: access.projectWhere };
+  });
+
+  const results = await Promise.all(
+    authorizedProjects.map(({ project, projectWhere }) =>
       db.project.updateMany({
-        where: { id: project.id, version: project.version, isDemo: session.isDemo },
+        where: {
+          id: project.id,
+          version: project.version,
+          ...projectWhere,
+          ...(archived ? { completed: true } : { archived: true }),
+        },
         data: {
           archived,
+          ...(!archived
+            ? {
+                completed: false,
+                status: "active",
+              }
+            : {}),
           version: { increment: 1 },
           updatedById: session.personId,
         },
@@ -339,15 +507,72 @@ export async function setArchived(
 
   if (failedCount > 0) {
     const action = archived ? "archived" : "unarchived";
+    const reason = archived
+      ? "changed before this update or were not complete"
+      : "changed before this update";
     return {
       ok: false,
       code: "CONFLICT",
       error:
-        `${failedCount} of ${parsedProjects.data.length} projects changed before this update. ` +
+        `${failedCount} of ${parsedProjects.data.length} projects ${reason}. ` +
         `${succeededCount} ${succeededCount === 1 ? "project was" : "projects were"} ${action}; ` +
         `reload and retry the ${failedCount} failed ${failedCount === 1 ? "project" : "projects"}.`,
     };
   }
 
   return { ok: true, data: { count: succeededCount } };
+}
+
+export async function removeProject(
+  id: string,
+  version: number,
+): Promise<ActionResult<{ id: string }>> {
+  const session = await requireSessionResult();
+  if (!session.ok) {
+    return session;
+  }
+
+  const parsed = projectVersionRefSchema.safeParse({ id, version });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: "VALIDATION",
+      error: "Invalid project deletion request.",
+    };
+  }
+
+  const access = await authorizeProjectMutation(parsed.data.id, session);
+  if (!access.ok) {
+    return access;
+  }
+
+  const project = await db.project.findUnique({
+    where: { id: parsed.data.id, isDemo: session.isDemo },
+    select: { archived: true },
+  });
+  if (!project) {
+    return { ok: false, code: "NOT_FOUND", error: "Project not found." };
+  }
+  if (!project.archived) {
+    return {
+      ok: false,
+      code: "VALIDATION",
+      error: "Only archived projects can be permanently deleted.",
+    };
+  }
+
+  const deleted = await db.project.deleteMany({
+    where: {
+      id: parsed.data.id,
+      version: parsed.data.version,
+      ...access.projectWhere,
+      archived: true,
+    },
+  });
+  if (deleted.count === 0) {
+    return { ok: false, code: "CONFLICT", error: CONFLICT_MESSAGE };
+  }
+
+  revalidateProjectRoutes();
+  return { ok: true, data: { id: parsed.data.id } };
 }

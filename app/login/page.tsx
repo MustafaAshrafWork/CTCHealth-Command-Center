@@ -19,7 +19,17 @@ const PERSONA_ORDER = [
 export default async function LoginPage() {
   const session = await getSession();
   if (session) {
-    redirect("/projects");
+    const actor = await db.person.findUnique({
+      where: { id: session.personId },
+      select: { active: true, canLogin: true, isDemo: true },
+    });
+    if (
+      actor?.active &&
+      actor.canLogin &&
+      actor.isDemo === session.isDemo
+    ) {
+      redirect("/timeline");
+    }
   }
 
   const persons = await db.person.findMany({

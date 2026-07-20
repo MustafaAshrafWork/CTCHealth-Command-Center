@@ -12,29 +12,29 @@ const TODAY = new Date("2026-07-19T00:00:00.000Z");
 function project(
   daysFromToday: number,
   progress: number,
-  status = "active",
+  completed = false,
 ) {
   const endDate = new Date(TODAY);
   endDate.setUTCDate(endDate.getUTCDate() + daysFromToday);
 
-  return { status, endDate, progress };
+  return { completed, endDate, progress };
 }
 
 describe("computeHealth", () => {
   it("returns green for a completed project even when it is overdue", () => {
-    expect(computeHealth(project(-10, 0, "completed"), TODAY)).toBe("green");
+    expect(computeHealth(project(-10, 0, true), TODAY)).toBe("green");
   });
 
   it("returns red for an unfinished overdue project", () => {
     expect(computeHealth(project(-1, 100), TODAY)).toBe("red");
   });
 
-  it("returns red when the end date is today", () => {
-    expect(computeHealth(project(0, 100), TODAY)).toBe("red");
+  it("returns green when the end date is today and progress is at least 80", () => {
+    expect(computeHealth(project(0, 100), TODAY)).toBe("green");
   });
 
-  it("returns red with exactly one day left", () => {
-    expect(computeHealth(project(1, 100), TODAY)).toBe("red");
+  it("returns green with one day left and progress is at least 80", () => {
+    expect(computeHealth(project(1, 100), TODAY)).toBe("green");
   });
 
   it("returns red with exactly 14 days left and progress 79", () => {
@@ -64,10 +64,10 @@ describe("computeHealth", () => {
     expect(dateOnlyUTC(lateSameDay)).toEqual(atMidnight);
     expect(
       computeHealth(
-        { status: "active", endDate: atMidnight, progress: 100 },
+        { completed: false, endDate: atMidnight, progress: 100 },
         lateSameDay,
       ),
-    ).toBe("red");
+    ).toBe("green");
   });
 });
 

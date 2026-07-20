@@ -9,10 +9,16 @@ export function dateOnlyUTC(date: Date): Date {
 }
 
 export function computeHealth(
-  project: { status: string; endDate: Date; progress: number },
+  project: {
+    completed?: boolean;
+    /** @deprecated Legacy compatibility while callers migrate to completed. */
+    status?: string;
+    endDate: Date;
+    progress: number;
+  },
   today: Date = new Date(),
 ): Health {
-  if (project.status === "completed") {
+  if (project.completed ?? project.status === "completed") {
     return "green";
   }
 
@@ -22,11 +28,7 @@ export function computeHealth(
     (normalizedEndDate.getTime() - normalizedToday.getTime()) /
     MILLISECONDS_PER_DAY;
 
-  if (daysLeft <= 1) {
-    return "red";
-  }
-
-  if (daysLeft <= 14 && project.progress < 80) {
+  if (daysLeft < 0 || (daysLeft <= 14 && project.progress < 80)) {
     return "red";
   }
 

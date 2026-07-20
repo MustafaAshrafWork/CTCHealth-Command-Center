@@ -1,15 +1,22 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { Milestone } from "@prisma/client";
+import { Prisma, type Milestone } from "@prisma/client";
 
 import { db } from "@/lib/db";
-import { dateOnlyUTC, deriveProgress } from "@/lib/health";
+import { dateOnlyUTC } from "@/lib/health";
+import { authorizeProjectMutation } from "@/lib/project-authorization";
 import { requireSession } from "@/lib/session";
 import type { ActionResult } from "@/lib/types";
 import { idSchema, milestoneInputSchema } from "@/lib/validation";
 
-const PROJECT_ROUTES = ["/projects", "/board", "/timeline", "/archived"] as const;
+const PROJECT_ROUTES = [
+  "/projects",
+  "/board",
+  "/timeline",
+  "/leadership",
+  "/archived",
+] as const;
 
 const CONFLICT_MESSAGE =
   "Project changed while you were editing — reload and retry.";
@@ -20,22 +27,6 @@ function revalidateProjectRoutes(): void {
   }
   // Detail pages render milestones and optimistic-lock versions too.
   revalidatePath("/projects/[id]", "page");
-}
-
-// Progress is derived from deliverables; zero deliverables means 0%. This
-// bypasses project.version on purpose so an open project-edit form can't
-// false-CONFLICT.
-async function syncProjectProgress(projectId: string): Promise<void> {
-  const milestones = await db.milestone.findMany({
-    where: { projectId },
-    select: { done: true },
-  });
-
-  const doneCount = milestones.filter((milestone) => milestone.done).length;
-  await db.project.update({
-    where: { id: projectId },
-    data: { progress: deriveProgress(doneCount, milestones.length) },
-  });
 }
 
 async function requireSessionResult(): Promise<
@@ -56,8 +47,9 @@ async function requireSessionResult(): Promise<
 
 async function checkAssignee(
   assigneeId: string,
+  client: Pick<Prisma.TransactionClient, "person"> = db,
 ): Promise<{ ok: true } | { ok: false; code: "NOT_FOUND" | "VALIDATION"; error: string }> {
-  const assignee = await db.person.findUnique({
+  const assignee = await client.person.findUnique({
     where: { id: assigneeId },
     select: { active: true, isDemo: true },
   });
@@ -101,34 +93,42 @@ export async function createMilestone(
     };
   }
 
-  const assigneeCheck = await checkAssignee(parsed.data.assigneeId);
-  if (!assigneeCheck.ok) {
-    return assigneeCheck;
-  }
+  const endDate = dateOnlyUTC(parsed.data.endDate ?? parsed.data.dueDate!);
+  const result = await db.$transaction(
+    async (tx) => {
+      const assigneeCheck = await checkAssignee(parsed.data.assigneeId, tx);
+      if (!assigneeCheck.ok) {
+        return assigneeCheck;
+      }
 
-  const project = await db.project.findUnique({
-    where: { id: projectId, isDemo: session.isDemo },
-    select: { id: true },
-  });
+      const access = await authorizeProjectMutation(projectId, session, tx);
+      if (!access.ok) {
+        return access;
+      }
 
-  if (!project) {
-    return { ok: false, code: "NOT_FOUND", error: "Project not found." };
-  }
-
-  const milestone = await db.milestone.create({
-    data: {
-      projectId,
-      name: parsed.data.name,
-      dueDate: dateOnlyUTC(parsed.data.dueDate),
-      done: parsed.data.done,
-      assigneeId: parsed.data.assigneeId,
-      updatedById: session.personId,
+      const milestone = await tx.milestone.create({
+        data: {
+          projectId,
+          name: parsed.data.name,
+          startDate: dateOnlyUTC(parsed.data.startDate ?? endDate),
+          endDate,
+          dueDate: endDate,
+          done: parsed.data.done,
+          assigneeId: parsed.data.assigneeId,
+          updatedById: session.personId,
+        },
+      });
+      return { ok: true as const, data: milestone };
     },
-  });
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
 
-  await syncProjectProgress(projectId);
+  if (!result.ok) {
+    return result;
+  }
+
   revalidateProjectRoutes();
-  return { ok: true, data: milestone };
+  return result;
 }
 
 export async function updateMilestone(
@@ -147,6 +147,18 @@ export async function updateMilestone(
   }
   id = parsedId.data;
 
+  const existing = await db.milestone.findFirst({
+    where: { id, project: { isDemo: session.isDemo } },
+    select: { projectId: true },
+  });
+  if (!existing) {
+    return { ok: false, code: "NOT_FOUND", error: "Milestone not found." };
+  }
+  const access = await authorizeProjectMutation(existing.projectId, session);
+  if (!access.ok) {
+    return access;
+  }
+
   const parsed = milestoneInputSchema.safeParse(input);
   if (!parsed.success) {
     return {
@@ -161,11 +173,14 @@ export async function updateMilestone(
     return assigneeCheck;
   }
 
+  const endDate = dateOnlyUTC(parsed.data.endDate ?? parsed.data.dueDate!);
   const updateResult = await db.milestone.updateMany({
-    where: { id, version, project: { isDemo: session.isDemo } },
+    where: { id, version, project: access.projectWhere },
     data: {
       name: parsed.data.name,
-      dueDate: dateOnlyUTC(parsed.data.dueDate),
+      startDate: dateOnlyUTC(parsed.data.startDate ?? endDate),
+      endDate,
+      dueDate: endDate,
       done: parsed.data.done,
       assigneeId: parsed.data.assigneeId,
       version: { increment: 1 },
@@ -185,7 +200,6 @@ export async function updateMilestone(
   }
 
   const milestone = await db.milestone.findUniqueOrThrow({ where: { id } });
-  await syncProjectProgress(milestone.projectId);
   revalidateProjectRoutes();
   return { ok: true, data: milestone };
 }
@@ -209,15 +223,21 @@ export async function deleteMilestone(
     where: { id, project: { isDemo: session.isDemo } },
     select: { projectId: true },
   });
+  if (!milestone) {
+    return { ok: false, code: "NOT_FOUND", error: "Milestone not found." };
+  }
+  const access = await authorizeProjectMutation(milestone.projectId, session);
+  if (!access.ok) {
+    return access;
+  }
   const deleteResult = await db.milestone.deleteMany({
-    where: { id, version, project: { isDemo: session.isDemo } },
+    where: { id, version, project: access.projectWhere },
   });
 
-  if (deleteResult.count === 0 || !milestone) {
+  if (deleteResult.count === 0) {
     return { ok: false, code: "CONFLICT", error: CONFLICT_MESSAGE };
   }
 
-  await syncProjectProgress(milestone.projectId);
   revalidateProjectRoutes();
   return { ok: true, data: { id } };
 }

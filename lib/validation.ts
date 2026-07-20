@@ -19,6 +19,64 @@ export const projectStatusSchema = z.enum([
   "completed",
 ]);
 export const projectPrioritySchema = z.enum(["high", "medium", "low"]);
+export const flagStatusSchema = z.enum(["open", "resolved"]);
+
+const optionalSharePointLink = z
+  .string()
+  .trim()
+  .optional()
+  .superRefine((value, context) => {
+    if (!value) {
+      return;
+    }
+
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      context.addIssue({
+        code: "custom",
+        message: "Enter a valid SharePoint HTTPS URL.",
+      });
+      return;
+    }
+
+    if (url.protocol !== "https:") {
+      context.addIssue({
+        code: "custom",
+        message: "SharePoint link must use HTTPS.",
+      });
+      return;
+    }
+
+    // This schema also runs in the client form for immediate format feedback.
+    // The private tenant allowlist is enforced when the server action parses
+    // the same payload; it must never be exposed in the browser bundle.
+    if (typeof window !== "undefined") {
+      return;
+    }
+
+    const allowedHosts = (process.env.SHAREPOINT_ALLOWED_HOSTS ?? "")
+      .split(",")
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (allowedHosts.length === 0) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "SharePoint links are disabled until SHAREPOINT_ALLOWED_HOSTS is configured.",
+      });
+      return;
+    }
+
+    if (!allowedHosts.includes(url.hostname.toLowerCase())) {
+      context.addIssue({
+        code: "custom",
+        message: `SharePoint hostname "${url.hostname}" is not allowed. Use an approved SharePoint host.`,
+      });
+    }
+  });
 
 const projectBaseFields = {
   name: requiredText(200),
@@ -28,8 +86,11 @@ const projectBaseFields = {
   priority: projectPrioritySchema,
   ownerId: nonEmptyText,
   memberIds: z.array(nonEmptyText),
+  progress: z.number().int().min(0).max(100).optional(),
+  completed: z.boolean().optional(),
   startDate: z.coerce.date(),
   endDate: z.coerce.date(),
+  sharePointLink: optionalSharePointLink,
   notes: z.string().optional(),
 };
 
@@ -47,20 +108,70 @@ export const projectCreateSchema = z
   .object({
     ...projectBaseFields,
     deliverables: z.array(
-      z.object({
-        name: requiredText(200),
-        dueDate: z.coerce.date(),
-        assigneeId: idSchema.optional(),
-      }),
+      z
+        .object({
+          name: requiredText(200),
+          startDate: z.coerce.date().optional(),
+          endDate: z.coerce.date().optional(),
+          dueDate: z.coerce.date().optional(),
+          assigneeId: idSchema.optional(),
+        })
+        .refine((milestone) => milestone.endDate || milestone.dueDate, {
+          message: "Milestone end date is required.",
+          path: ["endDate"],
+        })
+        .refine(
+          (milestone) => {
+            const endDate = milestone.endDate ?? milestone.dueDate;
+            const startDate = milestone.startDate ?? endDate;
+            return Boolean(startDate && endDate && endDate >= startDate);
+          },
+          {
+            message: "Milestone end date must be on or after its start date.",
+            path: ["endDate"],
+          },
+        ),
     ),
   })
   .refine((project) => project.endDate >= project.startDate, endAfterStart);
 
-export const milestoneInputSchema = z.object({
-  name: requiredText(200),
-  dueDate: z.coerce.date(),
-  done: z.boolean(),
-  assigneeId: idSchema,
+export const milestoneInputSchema = z
+  .object({
+    name: requiredText(200),
+    startDate: z.coerce.date().optional(),
+    endDate: z.coerce.date().optional(),
+    dueDate: z.coerce.date().optional(),
+    done: z.boolean(),
+    assigneeId: idSchema,
+  })
+  .refine((milestone) => milestone.endDate || milestone.dueDate, {
+    message: "Milestone end date is required.",
+    path: ["endDate"],
+  })
+  .refine(
+    (milestone) => {
+      const endDate = milestone.endDate ?? milestone.dueDate;
+      const startDate = milestone.startDate ?? endDate;
+      return Boolean(startDate && endDate && endDate >= startDate);
+    },
+    {
+      message: "Milestone end date must be on or after its start date.",
+      path: ["endDate"],
+    },
+  );
+
+export const flagInputSchema = z.object({
+  needs: requiredText(2_000),
+  from: requiredText(200),
+  raised: z.coerce.date(),
+});
+
+export const weeklyUpdateConfirmedInputSchema = z.object({
+  weekOf: z.coerce.date(),
+  summary: requiredText(20_000),
+  priorities: requiredText(10_000),
+  rawTranscript: z.string().max(100_000).optional(),
+  confirmed: z.literal(true),
 });
 
 export const personNameSchema = requiredText(100);

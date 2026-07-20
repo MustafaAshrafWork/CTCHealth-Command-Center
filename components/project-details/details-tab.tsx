@@ -6,8 +6,13 @@ import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import type { Person } from "@prisma/client";
 
+import {
+  MutationStatus,
+  useMutationStatus,
+} from "@/components/mutation-status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -23,7 +28,7 @@ import { dateOnlyUTC } from "@/lib/health";
 import { projectCreateSchema, projectInputSchema } from "@/lib/validation";
 
 import { AssigneeChip } from "./deliverables-section";
-import { MembersPicker, OwnerPicker } from "./people-picker";
+import { OwnerPicker } from "./people-picker";
 
 const CATEGORY_OPTIONS = [
   { value: "tech", label: "Tech" },
@@ -32,22 +37,10 @@ const CATEGORY_OPTIONS = [
   { value: "agents", label: "Agents" },
 ] as const;
 
-const STATUS_OPTIONS = [
-  { value: "planning", label: "Planning" },
-  { value: "active", label: "Active" },
-  { value: "on_hold", label: "On hold" },
-  { value: "completed", label: "Completed" },
-] as const;
-
-const PRIORITY_OPTIONS = [
-  { value: "high", label: "High" },
-  { value: "medium", label: "Medium" },
-  { value: "low", label: "Low" },
-] as const;
-
 type DeliverableDraft = {
   name: string;
-  dueDate: string;
+  startDate: string;
+  endDate: string;
   assigneeId: string;
 };
 
@@ -55,12 +48,12 @@ type FormState = {
   name: string;
   client: string;
   category: string;
-  status: string;
-  priority: string;
   ownerId: string;
-  memberIds: string[];
+  progress: number;
+  completed: boolean;
   startDate: string;
   endDate: string;
+  sharePointLink: string;
   deliverables: DeliverableDraft[];
 };
 
@@ -79,12 +72,12 @@ function defaultState(currentPersonId?: string): FormState {
     name: "",
     client: "",
     category: "tech",
-    status: "planning",
-    priority: "medium",
     ownerId: currentPersonId ?? "",
-    memberIds: [],
+    progress: 0,
+    completed: false,
     startDate: today,
     endDate: today,
+    sharePointLink: "",
     deliverables: [],
   };
 }
@@ -94,12 +87,12 @@ function stateFromProject(project: ProjectWithRelations): FormState {
     name: project.name,
     client: project.client,
     category: project.category,
-    status: project.status,
-    priority: project.priority,
     ownerId: project.ownerId,
-    memberIds: project.members.map((member) => member.personId),
+    progress: project.progress,
+    completed: project.completed,
     startDate: toDateInputValue(project.startDate),
     endDate: toDateInputValue(project.endDate),
+    sharePointLink: project.sharePointLink ?? "",
     deliverables: [],
   };
 }
@@ -122,12 +115,16 @@ export function DetailsTab({
   people,
   currentPersonId,
   mode,
+  canEdit = true,
+  canChooseOwner = true,
   onClose,
 }: {
   project: ProjectWithRelations | null;
   people: Person[];
   currentPersonId?: string;
   mode: "new" | "edit";
+  canEdit?: boolean;
+  canChooseOwner?: boolean;
   onClose: () => void;
 }) {
   const [state, setState] = useState<FormState>(() =>
@@ -138,6 +135,8 @@ export function DetailsTab({
   const [resetSignal, setResetSignal] = useState(0);
   const nameRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+  const mutation = useMutationStatus();
+  const formDisabled = isPending || !canEdit;
 
   useEffect(() => {
     if (resetSignal > 0) {
@@ -150,20 +149,29 @@ export function DetailsTab({
       name: values.name,
       client: values.client,
       category: values.category,
-      status: values.status,
-      priority: values.priority,
+      // Legacy-only fields stay stable while the visible form follows the
+      // briefing data model.
+      status: project?.status ?? "planning",
+      priority: project?.priority ?? "medium",
       ownerId: values.ownerId,
-      memberIds: values.memberIds,
+      memberIds:
+        project?.members.map((member) => member.personId) ?? [],
+      progress: values.progress,
+      completed: values.completed,
       startDate: dateOnlyUTC(new Date(values.startDate)),
       endDate: dateOnlyUTC(new Date(values.endDate)),
+      sharePointLink: values.sharePointLink,
       // Deliverables are only collected at creation; the detail page's
       // deliverables section owns them afterwards.
       ...(mode === "new"
         ? {
             deliverables: values.deliverables.map((deliverable) => ({
               name: deliverable.name,
-              dueDate: deliverable.dueDate
-                ? dateOnlyUTC(new Date(deliverable.dueDate))
+              startDate: deliverable.startDate
+                ? dateOnlyUTC(new Date(deliverable.startDate))
+                : "",
+              endDate: deliverable.endDate
+                ? dateOnlyUTC(new Date(deliverable.endDate))
                 : "",
               ...(deliverable.assigneeId
                 ? { assigneeId: deliverable.assigneeId }
@@ -171,54 +179,73 @@ export function DetailsTab({
             })),
           }
         : {}),
-      // notes intentionally omitted — the Notes tab owns project.notes; a
-      // stale copy here would clobber its autosaves.
+      // Legacy notes stay untouched; WeeklyUpdates is the visible qualitative
+      // record required by the briefing.
     };
   }
 
   function submit(addAnother: boolean) {
+    if (!canEdit) {
+      return;
+    }
+
     const schema = mode === "new" ? projectCreateSchema : projectInputSchema;
     const parsed = schema.safeParse(buildPayload(state));
     if (!parsed.success) {
       setErrors(mapIssues(parsed.error.issues));
+      mutation.failed("Review the highlighted fields before saving.");
       return;
     }
     setErrors({});
 
+    mutation.saving(mode === "new" ? "Creating project…" : "Saving project…");
     startTransition(async () => {
-      const result =
-        mode === "new"
-          ? await createProject(parsed.data)
-          : await updateProject(project!.id, project!.version, parsed.data);
+      try {
+        const result =
+          mode === "new"
+            ? await createProject(parsed.data)
+            : await updateProject(project!.id, project!.version, parsed.data);
 
-      if (!result.ok) {
-        toast.error(result.error);
-        return;
+        if (!result.ok) {
+          toast.error(result.error);
+          mutation.failed(result.error, result.code === "CONFLICT");
+          return;
+        }
+
+        const successMessage =
+          mode === "new" ? "Project created." : "Project saved.";
+        toast.success(successMessage);
+        mutation.saved(successMessage);
+
+        if (mode === "new" && addAnother) {
+          setState(defaultState(currentPersonId));
+          setErrors({});
+          setResetSignal((count) => count + 1);
+          return;
+        }
+
+        if (mode === "new") {
+          // Land on the new project's page so milestones can be added.
+          router.push(`/projects/${result.data.id}`);
+          return;
+        }
+
+        onClose();
+      } catch {
+        const message =
+          mode === "new"
+            ? "Could not create the project."
+            : "Could not save the project.";
+        toast.error(message);
+        mutation.failed(message);
       }
-
-      toast.success(mode === "new" ? "Project created." : "Project saved.");
-
-      if (mode === "new" && addAnother) {
-        setState(defaultState(currentPersonId));
-        setErrors({});
-        setResetSignal((count) => count + 1);
-        return;
-      }
-
-      if (mode === "new") {
-        // Land on the new project's page so deliverables can be added
-        // right away.
-        router.push(`/projects/${result.data.id}`);
-        return;
-      }
-
-      onClose();
     });
   }
 
   return (
     <form
       className="flex min-h-0 flex-1 flex-col"
+      aria-busy={isPending}
       onSubmit={(event) => {
         event.preventDefault();
         submit(false);
@@ -236,7 +263,7 @@ export function DetailsTab({
             ref={nameRef}
             autoFocus
             value={state.name}
-            disabled={isPending}
+            disabled={formDisabled}
             aria-invalid={Boolean(errors.name)}
             onChange={(event) =>
               setState((prev) => ({ ...prev, name: event.target.value }))
@@ -252,7 +279,7 @@ export function DetailsTab({
           <Input
             id="project-client"
             value={state.client}
-            disabled={isPending}
+            disabled={formDisabled}
             aria-invalid={Boolean(errors.client)}
             onChange={(event) =>
               setState((prev) => ({ ...prev, client: event.target.value }))
@@ -263,66 +290,20 @@ export function DetailsTab({
           ) : null}
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <Label>Category</Label>
-            <Select
-              value={state.category}
-              disabled={isPending}
-              onValueChange={(value) =>
-                setState((prev) => ({ ...prev, category: value }))
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {CATEGORY_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>Priority</Label>
-            <Select
-              value={state.priority}
-              disabled={isPending}
-              onValueChange={(value) =>
-                setState((prev) => ({ ...prev, priority: value }))
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PRIORITY_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
         <div className="space-y-1.5">
-          <Label>Status</Label>
+          <Label>Category</Label>
           <Select
-            value={state.status}
-            disabled={isPending}
+            value={state.category}
+            disabled={formDisabled}
             onValueChange={(value) =>
-              setState((prev) => ({ ...prev, status: value }))
+              setState((prev) => ({ ...prev, category: value }))
             }
           >
             <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {STATUS_OPTIONS.map((option) => (
+              {CATEGORY_OPTIONS.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {option.label}
                 </SelectItem>
@@ -333,44 +314,51 @@ export function DetailsTab({
 
         <div className="space-y-1.5">
           <Label>Owner</Label>
-          <OwnerPicker
-            people={people}
-            value={state.ownerId}
-            invalid={Boolean(errors.ownerId)}
-            onChange={(ownerId) =>
-              setState((prev) => ({
-                ...prev,
-                ownerId,
-                memberIds: prev.memberIds.filter((id) => id !== ownerId),
-              }))
-            }
-          />
+          {canChooseOwner && canEdit ? (
+            <OwnerPicker
+              people={people}
+              value={state.ownerId}
+              invalid={Boolean(errors.ownerId)}
+              onChange={(ownerId) =>
+                setState((prev) => ({
+                  ...prev,
+                  ownerId,
+                  deliverables: prev.deliverables.map((deliverable) =>
+                    deliverable.assigneeId
+                      ? deliverable
+                      : { ...deliverable, assigneeId: ownerId },
+                  ),
+                }))
+              }
+            />
+          ) : (
+            <Input
+              value={
+                people.find((person) => person.id === state.ownerId)?.name ??
+                "Current user"
+              }
+              disabled
+              aria-label="Project owner"
+            />
+          )}
           {errors.ownerId ? (
             <p className="text-xs text-destructive">{errors.ownerId}</p>
           ) : null}
         </div>
 
-        <div className="space-y-1.5">
-          <Label>Team members</Label>
-          <MembersPicker
-            people={people.filter((person) => person.id !== state.ownerId)}
-            value={state.memberIds}
-            onChange={(memberIds) =>
-              setState((prev) => ({ ...prev, memberIds }))
-            }
-          />
-        </div>
-
         {mode === "new" ? (
           <div className="space-y-1.5">
-            <Label>Deliverables</Label>
+            <Label>Milestones</Label>
             <div className="space-y-2">
               {state.deliverables.map((deliverable, index) => (
-                <div key={index} className="flex items-center gap-2">
+                <div
+                  key={index}
+                  className="grid gap-2 rounded-md border border-border p-2 sm:grid-cols-[minmax(0,1fr)_8.5rem_8.5rem_auto_auto] sm:items-center"
+                >
                   <Input
                     value={deliverable.name}
-                    placeholder="Deliverable name"
-                    disabled={isPending}
+                    placeholder="Milestone name"
+                    disabled={formDisabled}
                     onChange={(event) =>
                       setState((prev) => ({
                         ...prev,
@@ -384,15 +372,31 @@ export function DetailsTab({
                   />
                   <Input
                     type="date"
-                    className="w-36 shrink-0"
-                    value={deliverable.dueDate}
-                    disabled={isPending}
+                    aria-label="Milestone start date"
+                    value={deliverable.startDate}
+                    disabled={formDisabled}
                     onChange={(event) =>
                       setState((prev) => ({
                         ...prev,
                         deliverables: prev.deliverables.map((item, i) =>
                           i === index
-                            ? { ...item, dueDate: event.target.value }
+                            ? { ...item, startDate: event.target.value }
+                            : item,
+                        ),
+                      }))
+                    }
+                  />
+                  <Input
+                    type="date"
+                    aria-label="Milestone end date"
+                    value={deliverable.endDate}
+                    disabled={formDisabled}
+                    onChange={(event) =>
+                      setState((prev) => ({
+                        ...prev,
+                        deliverables: prev.deliverables.map((item, i) =>
+                          i === index
+                            ? { ...item, endDate: event.target.value }
                             : item,
                         ),
                       }))
@@ -401,7 +405,7 @@ export function DetailsTab({
                   <AssigneeChip
                     people={people}
                     value={deliverable.assigneeId}
-                    disabled={isPending}
+                    disabled={formDisabled}
                     onChange={(assigneeId) =>
                       setState((prev) => ({
                         ...prev,
@@ -416,7 +420,7 @@ export function DetailsTab({
                     variant="ghost"
                     size="icon"
                     aria-label="Remove deliverable"
-                    disabled={isPending}
+                    disabled={formDisabled}
                     onClick={() =>
                       setState((prev) => ({
                         ...prev,
@@ -434,7 +438,7 @@ export function DetailsTab({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={isPending}
+                disabled={formDisabled}
                 onClick={() =>
                   setState((prev) => ({
                     ...prev,
@@ -442,7 +446,8 @@ export function DetailsTab({
                       ...prev.deliverables,
                       {
                         name: "",
-                        dueDate: prev.endDate,
+                        startDate: prev.startDate,
+                        endDate: prev.endDate,
                         assigneeId: prev.ownerId,
                       },
                     ],
@@ -450,12 +455,12 @@ export function DetailsTab({
                 }
               >
                 <Plus data-icon="inline-start" />
-                Add deliverable
+                Add milestone
               </Button>
             </div>
             {errors.deliverables ? (
               <p className="text-xs text-destructive">
-                Every deliverable needs a name and a due date.
+                Every milestone needs a name and a valid date range.
               </p>
             ) : null}
           </div>
@@ -468,7 +473,7 @@ export function DetailsTab({
               id="project-start"
               type="date"
               value={state.startDate}
-              disabled={isPending}
+              disabled={formDisabled}
               aria-invalid={Boolean(errors.startDate)}
               onChange={(event) =>
                 setState((prev) => ({ ...prev, startDate: event.target.value }))
@@ -485,7 +490,7 @@ export function DetailsTab({
               id="project-end"
               type="date"
               value={state.endDate}
-              disabled={isPending}
+              disabled={formDisabled}
               aria-invalid={Boolean(errors.endDate)}
               onChange={(event) =>
                 setState((prev) => ({ ...prev, endDate: event.target.value }))
@@ -497,22 +502,102 @@ export function DetailsTab({
           </div>
         </div>
 
+        <div className="space-y-1.5">
+          <Label htmlFor="project-progress">Progress</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              id="project-progress"
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              value={state.progress}
+              disabled={formDisabled}
+              aria-invalid={Boolean(errors.progress)}
+              onChange={(event) =>
+                setState((prev) => ({
+                  ...prev,
+                  progress: Number(event.target.value),
+                }))
+              }
+            />
+            <span className="text-sm text-muted-foreground">%</span>
+          </div>
+          {errors.progress ? (
+            <p className="text-xs text-destructive">{errors.progress}</p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Set manually by the project owner; milestones do not calculate it.
+            </p>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="project-sharepoint-link">SharePoint folder</Label>
+          <Input
+            id="project-sharepoint-link"
+            type="url"
+            placeholder="https://…"
+            value={state.sharePointLink}
+            disabled={formDisabled}
+            aria-invalid={Boolean(errors.sharePointLink)}
+            onChange={(event) =>
+              setState((prev) => ({
+                ...prev,
+                sharePointLink: event.target.value,
+              }))
+            }
+          />
+          {errors.sharePointLink ? (
+            <p className="text-xs text-destructive">
+              {errors.sharePointLink}
+            </p>
+          ) : null}
+        </div>
+
+        <label
+          htmlFor="project-completed"
+          className="flex cursor-pointer items-start gap-3 rounded-md border border-border p-3"
+        >
+          <Checkbox
+            id="project-completed"
+            checked={state.completed}
+            disabled={formDisabled}
+            onCheckedChange={(checked) =>
+              setState((prev) => ({ ...prev, completed: checked === true }))
+            }
+          />
+          <span>
+            <span className="block text-sm font-medium">Project completed</span>
+            <span className="block text-xs text-muted-foreground">
+              Completed projects are always shown as on track and can be archived.
+            </span>
+          </span>
+        </label>
+
       </div>
 
-      <div className="flex shrink-0 justify-end gap-2 border-t bg-muted/30 px-4 py-3">
-        {mode === "new" ? (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={isPending}
-            onClick={() => submit(true)}
-          >
-            Save and add another
-          </Button>
-        ) : null}
-        <Button type="submit" disabled={isPending}>
-          {mode === "new" ? "Create project" : "Save changes"}
-        </Button>
+      <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-muted/30 px-4 py-3">
+        <MutationStatus value={mutation.status} className="min-w-0 flex-1" />
+        {canEdit ? (
+          <div className="flex justify-end gap-2">
+            {mode === "new" ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isPending}
+                onClick={() => submit(true)}
+              >
+                Save and add another
+              </Button>
+            ) : null}
+            <Button type="submit" disabled={isPending}>
+              {mode === "new" ? "Create project" : "Save changes"}
+            </Button>
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground">Read-only</span>
+        )}
       </div>
     </form>
   );

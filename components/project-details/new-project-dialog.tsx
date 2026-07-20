@@ -15,11 +15,13 @@ import { DetailsTab } from "./details-tab";
 export function NewProjectDialog({
   people,
   currentPersonId,
+  canChooseOwner = true,
   open,
   onOpenChange,
 }: {
   people: Person[];
   currentPersonId: string;
+  canChooseOwner?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -39,6 +41,8 @@ export function NewProjectDialog({
             people={people}
             currentPersonId={currentPersonId}
             mode="new"
+            canEdit
+            canChooseOwner={canChooseOwner}
             onClose={() => onOpenChange(false)}
           />
         </div>

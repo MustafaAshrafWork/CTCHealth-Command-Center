@@ -1,6 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 
+import { db } from "@/lib/db";
 import type { Session } from "@/lib/types";
 
 const COOKIE_NAME = "cc_session";
@@ -85,6 +86,21 @@ export async function requireSession(): Promise<Session> {
   if (!session) {
     throw new Error("UNAUTHORIZED");
   }
+
+  // Sessions last up to 30 days, so every protected read/write must re-check
+  // that the account has not been deactivated since the cookie was issued.
+  const actor = await db.person.findUnique({
+    where: { id: session.personId },
+    select: { active: true, canLogin: true, isDemo: true },
+  });
+  if (
+    !actor?.active ||
+    !actor.canLogin ||
+    actor.isDemo !== session.isDemo
+  ) {
+    throw new Error("UNAUTHORIZED");
+  }
+
   return session;
 }
 

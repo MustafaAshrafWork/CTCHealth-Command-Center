@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { db } from "@/lib/db";
+import { authorizeProjectMutation } from "@/lib/project-authorization";
 import { requireSession } from "@/lib/session";
 import type { ActionResult } from "@/lib/types";
 import { idSchema } from "@/lib/validation";
@@ -45,6 +46,11 @@ export async function saveNotes(
   }
   projectId = parsedProjectId.data;
 
+  const access = await authorizeProjectMutation(projectId, session);
+  if (!access.ok) {
+    return access;
+  }
+
   const parsed = notesJsonSchema.safeParse(notesJson);
   if (!parsed.success) {
     return {
@@ -55,7 +61,7 @@ export async function saveNotes(
   }
 
   const updateResult = await db.project.updateMany({
-    where: { id: projectId, version, isDemo: session.isDemo },
+    where: { id: projectId, version, ...access.projectWhere },
     data: {
       notes: parsed.data,
       version: { increment: 1 },

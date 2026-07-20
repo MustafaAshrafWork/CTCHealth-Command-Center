@@ -50,11 +50,9 @@ export function AssigneeChip({
 }) {
   const [open, setOpen] = useState(false);
   const [added, setAdded] = useState<Person[]>([]);
-  const activePeople = mergePeople(
-    people.filter((person) => person.active),
-    added,
-  );
-  const selected = activePeople.find((person) => person.id === value);
+  const allPeople = mergePeople(people, added);
+  const activePeople = allPeople.filter((person) => person.active);
+  const selected = allPeople.find((person) => person.id === value);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -62,6 +60,11 @@ export function AssigneeChip({
         <button
           type="button"
           disabled={disabled}
+          aria-label={
+            selected
+              ? `Change assignee, currently ${selected.name}`
+              : "Assign a person"
+          }
           title={selected ? selected.name : "Assign"}
           className="shrink-0 rounded-full disabled:opacity-50"
         >

@@ -4,7 +4,6 @@ import { db } from "@/lib/db";
 import { computeHealth } from "@/lib/health";
 import { sanitizePerson } from "@/lib/sanitize-person";
 import { requireSession } from "@/lib/session";
-import type { ProjectWithRelations } from "@/lib/actions/projects";
 
 import { ProjectDetail } from "./project-detail";
 
@@ -19,16 +18,25 @@ export default async function ProjectDetailPage({
   const session = await requireSession();
   const isDemo = session.isDemo;
 
-  const [project, people] = await Promise.all([
+  const [project, people, actor] = await Promise.all([
     db.project.findUnique({
       where: { id, isDemo },
       include: {
         owner: true,
         members: { include: { person: true } },
         milestones: true,
+        flags: true,
+        weeklyUpdates: {
+          include: { owner: true },
+          orderBy: [{ weekOf: "desc" }, { createdDate: "desc" }],
+        },
       },
     }),
     db.person.findMany({ where: { isDemo: false }, orderBy: { name: "asc" } }),
+    db.person.findUnique({
+      where: { id: session.personId },
+      select: { isAdmin: true },
+    }),
   ]);
 
   if (!project) {
@@ -42,19 +50,27 @@ export default async function ProjectDetailPage({
       ...member,
       person: sanitizePerson(member.person),
     })),
+    weeklyUpdates: project.weeklyUpdates.map((update) => ({
+      ...update,
+      owner: sanitizePerson(update.owner),
+    })),
   };
 
   const health = computeHealth({
-    status: project.status,
+    completed: project.completed,
     endDate: project.endDate,
     progress: project.progress,
   });
+  const canEdit = Boolean(
+    session.isDemo || actor?.isAdmin || project.ownerId === session.personId,
+  );
 
   return (
     <ProjectDetail
-      project={safeProject as ProjectWithRelations}
+      project={safeProject}
       people={people.map(sanitizePerson)}
       health={health}
+      canEdit={canEdit}
     />
   );
 }

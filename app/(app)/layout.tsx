@@ -4,7 +4,6 @@ import { db } from "@/lib/db";
 import { getSession } from "@/lib/session";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
-import { DeadlineAlertServer } from "@/components/notifications/deadline-alert-server";
 
 export default async function AppLayout({
   children,
@@ -18,9 +17,20 @@ export default async function AppLayout({
 
   const person = await db.person.findUnique({
     where: { id: session.personId },
-    select: { name: true, mustChangePassword: true, isAdmin: true },
+    select: {
+      name: true,
+      active: true,
+      canLogin: true,
+      mustChangePassword: true,
+      isAdmin: true,
+      isDemo: true,
+    },
   });
-  if (!person) {
+  if (
+    !person?.active ||
+    !person.canLogin ||
+    person.isDemo !== session.isDemo
+  ) {
     redirect("/login");
   }
   if (person.mustChangePassword) {
@@ -32,8 +42,9 @@ export default async function AppLayout({
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar userName={person.name} isAdmin={person.isAdmin} />
-        <DeadlineAlertServer personId={session.personId} isDemo={session.isDemo} />
-        <main className="min-h-0 flex-1 overflow-auto overflow-x-hidden p-6">{children}</main>
+        <main className="min-h-0 flex-1 overflow-auto overflow-x-hidden p-3 sm:p-4 lg:p-6">
+          {children}
+        </main>
       </div>
     </div>
   );

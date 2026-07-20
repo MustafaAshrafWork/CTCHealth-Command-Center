@@ -139,6 +139,8 @@ function milestonesFor(
 
     return {
       name: `Milestone ${milestoneIndex + 1}: ${DELIVERABLES[(index + milestoneIndex) % DELIVERABLES.length]}`,
+      startDate: addUtcDays(SEED_TODAY, dueOffset),
+      endDate: addUtcDays(SEED_TODAY, dueOffset),
       dueDate: addUtcDays(SEED_TODAY, dueOffset),
       done: (index + milestoneIndex) % 3 === 0,
       assignee: { connect: { id: assigneeId } },
@@ -247,17 +249,6 @@ async function bootstrapPasswords(): Promise<void> {
   );
 }
 
-function progressFromMilestones(
-  milestones: Prisma.MilestoneCreateWithoutProjectInput[],
-): number | null {
-  if (milestones.length === 0) {
-    return null;
-  }
-
-  const doneCount = milestones.filter((milestone) => milestone.done).length;
-  return Math.round((100 * doneCount) / milestones.length);
-}
-
 function projectDataFor(index: number, people: Person[]): Prisma.ProjectCreateInput {
   const owner = people[index % people.length];
   const updater = people[index % people.length];
@@ -272,17 +263,21 @@ function projectDataFor(index: number, people: Person[]): Prisma.ProjectCreateIn
     owner.id,
     memberIds,
   );
-  const progress = progressFromMilestones(milestones) ?? 0;
+  const status =
+    index < SPECIAL_END_OFFSETS.length ? "active" : STATUSES[index % STATUSES.length];
+  const completed = status === "completed";
+  const progress = completed ? 100 : (index * 17) % 101;
 
   return {
     name: projectName(index),
     client: CLIENTS[index % CLIENTS.length],
     category: CATEGORIES[index % CATEGORIES.length],
-    status: index < SPECIAL_END_OFFSETS.length ? "active" : STATUSES[index % STATUSES.length],
+    status,
     priority: PRIORITIES[index % PRIORITIES.length],
     isDemo: true,
     owner: { connect: { id: owner.id } },
     progress,
+    completed,
     archived: ARCHIVED_INDEXES.has(index),
     startDate: addUtcDays(SEED_TODAY, startOffset),
     endDate: addUtcDays(SEED_TODAY, endOffset),

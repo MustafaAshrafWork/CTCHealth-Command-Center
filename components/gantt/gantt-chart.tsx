@@ -1,6 +1,7 @@
 "use client";
 
 import { differenceInCalendarDays } from "date-fns";
+import { Flag, Pencil } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
@@ -12,24 +13,40 @@ export type GanttMilestone = {
   id: string;
   name: string;
   done: boolean;
-  dueDate: string;
+  startDate: string;
+  endDate: string;
 };
 
 export type GanttRow = {
   id: string;
   name: string;
+  category: string;
   client: string;
   ownerName: string;
-  status: string;
+  completed: boolean;
   startDate: string;
   endDate: string;
   progress: number;
   health: Health;
+  openBlockerCount: number;
   milestones: GanttMilestone[];
 };
 
-const LEFT_COL_WIDTH = 260;
-const ROW_HEIGHT = 40;
+const METADATA_COLUMNS = [
+  { key: "project", label: "Project name", width: 224 },
+  { key: "edit", label: "Quick edit", width: 72 },
+  { key: "category", label: "Category", width: 96 },
+  { key: "client", label: "Client", width: 136 },
+  { key: "owner", label: "Owner", width: 144 },
+] as const;
+const METADATA_WIDTH = METADATA_COLUMNS.reduce(
+  (total, column) => total + column.width,
+  0,
+);
+const METADATA_GRID = METADATA_COLUMNS.map((column) => `${column.width}px`).join(
+  " ",
+);
+const ROW_HEIGHT = 44;
 const BAR_HEIGHT = 18;
 const MIN_BAR_PX = 6;
 const TRACK_MIN_PX = 600;
@@ -59,6 +76,13 @@ const HEALTH_DOT: Record<Health, string> = {
   green: "bg-emerald-500",
   amber: "bg-amber-500",
   red: "bg-red-500",
+};
+
+const CATEGORY_LABEL: Record<string, string> = {
+  tech: "Tech",
+  consultancy: "Consultancy",
+  agency: "Agency",
+  agents: "Agents",
 };
 
 const monthLabel = new Intl.DateTimeFormat("en-US", {
@@ -106,12 +130,16 @@ function buildAxis(rows: GanttRow[]): Axis {
   const today = dateOnlyUTC(new Date());
 
   const milestoneTimeMs = rows.flatMap((row) =>
-    row.milestones.map((milestone) => new Date(milestone.dueDate).getTime()),
+    row.milestones.flatMap((milestone) => [
+      new Date(milestone.startDate).getTime(),
+      new Date(milestone.endDate).getTime(),
+    ]),
   );
 
   const startTimeMs = [
     ...rows.map((row) => new Date(row.startDate).getTime()),
     ...milestoneTimeMs,
+    today.getTime(),
   ];
   const endTimeMs = [
     ...rows.map((row) => new Date(row.endDate).getTime()),
@@ -127,7 +155,11 @@ function buildAxis(rows: GanttRow[]): Axis {
     minStart.getUTCMonth(),
     1,
   );
-  const axisEndMs = Date.UTC(maxEnd.getUTCFullYear(), maxEnd.getUTCMonth() + 1, 1);
+  const axisEndMs = Date.UTC(
+    maxEnd.getUTCFullYear(),
+    maxEnd.getUTCMonth() + 1,
+    1,
+  );
 
   const totalDays = differenceInCalendarDays(
     new Date(axisEndMs),
@@ -224,7 +256,7 @@ export function GanttChart({ rows }: { rows: GanttRow[] }) {
   // Track always fills the container so there is never dead space on the
   // right; zoomed-in modes overflow it and scroll horizontally.
   const availableTrack = Math.max(
-    containerWidth - LEFT_COL_WIDTH,
+    containerWidth - METADATA_WIDTH,
     TRACK_MIN_PX,
   );
   const monthCount = Math.max(months.length, 1);
@@ -272,7 +304,7 @@ export function GanttChart({ rows }: { rows: GanttRow[] }) {
   useEffect(() => {
     const container = scrollRef.current;
     if (!container || !todayInside) return;
-    const todayLeftPx = LEFT_COL_WIDTH + (todayPct / 100) * trackWidth;
+    const todayLeftPx = METADATA_WIDTH + (todayPct / 100) * trackWidth;
     const target = todayLeftPx - container.clientWidth * (1 / 3);
     container.scrollLeft = Math.max(0, Math.round(target));
   }, [zoom, todayInside, todayPct, trackWidth]);
@@ -292,13 +324,19 @@ export function GanttChart({ rows }: { rows: GanttRow[] }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex justify-end">
-        <div className="inline-flex items-center gap-0.5 rounded-md border bg-card p-0.5">
+        <div
+          className="inline-flex items-center gap-0.5 rounded-md border bg-card p-0.5"
+          role="group"
+          aria-label="Timeline zoom"
+        >
           {ZOOM_OPTIONS.map((option) => (
             <Button
               key={option.id}
+              type="button"
               variant={zoom === option.id ? "secondary" : "ghost"}
               size="sm"
               className="h-7 px-2.5 text-xs"
+              aria-pressed={zoom === option.id}
               onClick={() => setZoom(option.id)}
             >
               {option.label}
@@ -314,16 +352,26 @@ export function GanttChart({ rows }: { rows: GanttRow[] }) {
       >
         <div
           className="relative"
-          style={{ minWidth: LEFT_COL_WIDTH + trackWidth }}
+          style={{ minWidth: METADATA_WIDTH + trackWidth }}
         >
           {/* Header — two tiers: years spanning their months, then months or
               quarters depending on zoom density. */}
           <div className="sticky top-0 z-30 flex border-b bg-card">
             <div
-              className="sticky left-0 z-40 flex shrink-0 items-center self-stretch border-r bg-card px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-              style={{ width: LEFT_COL_WIDTH }}
+              className="sticky left-0 z-40 grid shrink-0 self-stretch border-r bg-card text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+              style={{
+                width: METADATA_WIDTH,
+                gridTemplateColumns: METADATA_GRID,
+              }}
             >
-              Project
+              {METADATA_COLUMNS.map((column) => (
+                <div
+                  key={column.key}
+                  className="flex items-center border-r px-3 last:border-r-0"
+                >
+                  {column.label}
+                </div>
+              ))}
             </div>
             <div className="shrink-0" style={{ width: trackWidth }}>
               <div className="relative h-5 border-b border-border/60">
@@ -366,8 +414,9 @@ export function GanttChart({ rows }: { rows: GanttRow[] }) {
             {/* Vertical grid lines at header-tier boundaries (behind rows —
                 no z-index, painted first) */}
             <div
+              aria-hidden="true"
               className="pointer-events-none absolute top-0 bottom-0"
-              style={{ left: LEFT_COL_WIDTH, width: trackWidth }}
+              style={{ left: METADATA_WIDTH, width: trackWidth }}
             >
               {tierCells.slice(1).map((cell) => (
                 <div
@@ -382,7 +431,9 @@ export function GanttChart({ rows }: { rows: GanttRow[] }) {
             {todayInside ? (
               <div
                 className="pointer-events-none absolute top-0 bottom-0 z-10"
-                style={{ left: LEFT_COL_WIDTH, width: trackWidth }}
+                role="img"
+                aria-label={`Today, ${formatUtcDate(today.getTime())}`}
+                style={{ left: METADATA_WIDTH, width: trackWidth }}
               >
                 <div
                   className="absolute top-0 bottom-0"
@@ -413,32 +464,69 @@ export function GanttChart({ rows }: { rows: GanttRow[] }) {
                   className="group relative flex border-t border-border/50"
                   style={{ height: ROW_HEIGHT }}
                 >
-                  {/* Sticky left column */}
+                  {/* Sticky portfolio columns */}
                   <div
-                    className="sticky left-0 z-20 flex h-full shrink-0 items-center gap-2 border-r bg-card px-3 group-hover:bg-muted/50"
-                    style={{ width: LEFT_COL_WIDTH }}
+                    className="sticky left-0 z-20 grid h-full shrink-0 border-r bg-card group-hover:bg-muted/50"
+                    style={{
+                      width: METADATA_WIDTH,
+                      gridTemplateColumns: METADATA_GRID,
+                    }}
                   >
-                    <span
-                      className={cn(
-                        "h-2 w-2 shrink-0 rounded-full",
-                        HEALTH_DOT[row.health],
-                      )}
-                      aria-label={healthLabel(row.health)}
-                    />
-                    <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-2 border-r px-3">
+                      <span
+                        className={cn(
+                          "h-2 w-2 shrink-0 rounded-full",
+                          HEALTH_DOT[row.health],
+                        )}
+                        role="img"
+                        aria-label={healthLabel(row.health)}
+                      />
                       <Link
                         href={`/projects/${row.id}`}
-                        className="block truncate text-sm font-medium hover:underline"
+                        className="min-w-0 truncate text-sm font-medium hover:underline"
                         title={row.name}
                       >
                         {row.name}
                       </Link>
-                      <div
-                        className="truncate text-[11px] text-muted-foreground"
-                        title={`${row.client} · ${row.ownerName}`}
+                      {row.openBlockerCount > 0 ? (
+                        <span
+                          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950 dark:text-red-300"
+                          title={`${row.openBlockerCount} open blocker${
+                            row.openBlockerCount === 1 ? "" : "s"
+                          }`}
+                        >
+                          <Flag className="size-2.5" aria-hidden="true" />
+                          {row.openBlockerCount}
+                          <span className="sr-only"> open blockers</span>
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center justify-center border-r">
+                      <Link
+                        href={`/projects/${row.id}`}
+                        className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label={`Quick edit ${row.name}`}
+                        title={`Quick edit ${row.name}`}
                       >
-                        {row.client}
-                      </div>
+                        <Pencil className="size-3.5" aria-hidden="true" />
+                      </Link>
+                    </div>
+                    <div className="flex min-w-0 items-center border-r px-3">
+                      <span className="truncate rounded-full bg-muted px-2 py-0.5 text-xs font-medium">
+                        {CATEGORY_LABEL[row.category] ?? row.category}
+                      </span>
+                    </div>
+                    <div
+                      className="flex min-w-0 items-center border-r px-3 text-xs text-muted-foreground"
+                      title={row.client}
+                    >
+                      <span className="truncate">{row.client}</span>
+                    </div>
+                    <div
+                      className="flex min-w-0 items-center px-3 text-xs text-muted-foreground"
+                      title={row.ownerName}
+                    >
+                      <span className="truncate">{row.ownerName}</span>
                     </div>
                   </div>
 
@@ -456,6 +544,8 @@ export function GanttChart({ rows }: { rows: GanttRow[] }) {
                         "absolute overflow-hidden rounded",
                         HEALTH_BAR[row.health],
                       )}
+                      role="img"
+                      aria-label={`${row.name}, ${formatUtcDate(startMs)} to ${formatUtcDate(endMs)}, ${row.progress}% complete, ${healthLabel(row.health)}`}
                       style={{
                         left: `${leftPct}%`,
                         width: `${widthPct}%`,
@@ -480,7 +570,8 @@ export function GanttChart({ rows }: { rows: GanttRow[] }) {
                     </div>
 
                     {row.milestones.map((milestone) => {
-                      const dueMs = new Date(milestone.dueDate).getTime();
+                      const startMs = new Date(milestone.startDate).getTime();
+                      const dueMs = new Date(milestone.endDate).getTime();
                       const duePct = pctFor(dueMs, axisStartMs, totalDays);
                       if (duePct < 0 || duePct > 100) return null;
                       const overdue =
@@ -505,7 +596,9 @@ export function GanttChart({ rows }: { rows: GanttRow[] }) {
                             transform:
                               "translate(-50%, -50%) rotate(45deg)",
                           }}
-                          title={`${milestone.name} · ${formatUtcDate(dueMs)}`}
+                          role="img"
+                          aria-label={`Milestone ${milestone.name}, ${milestone.done ? "Done" : overdue ? "Open and overdue" : "Open"}, ${formatUtcDate(startMs)} to ${formatUtcDate(dueMs)}`}
+                          title={`${milestone.name} · ${formatUtcDate(startMs)}–${formatUtcDate(dueMs)}`}
                         />
                       );
                     })}

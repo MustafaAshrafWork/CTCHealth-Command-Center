@@ -89,7 +89,7 @@ export async function loginAs(
   }
 
   await createSession({ id: person.id, name: person.name, isDemo: person.isDemo });
-  redirect("/projects");
+  redirect("/timeline");
 }
 
 export async function loginAsDemo(): Promise<ActionResult<never>> {
@@ -107,7 +107,7 @@ export async function loginAsDemo(): Promise<ActionResult<never>> {
   }
 
   await createSession({ id: demoPerson.id, name: demoPerson.name, isDemo: true });
-  redirect("/projects");
+  redirect("/timeline");
 }
 
 export async function createPerson(
