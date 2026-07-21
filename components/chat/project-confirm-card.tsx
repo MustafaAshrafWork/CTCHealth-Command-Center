@@ -9,12 +9,14 @@ const CATEGORY_LABELS: Record<ProjectDraft["category"], string> = {
   agents: "Agents",
 };
 
-function formatBudget(budget: number | null): string {
+function formatBudget(
+  budget: number | null,
+  currency: ProjectDraft["currency"],
+): string {
   if (budget === null) {
     return "Not set";
   }
-  // This pilot stores a numeric amount only; it does not store a currency.
-  return `${budget.toLocaleString()} (no currency stored)`;
+  return `${budget.toLocaleString()} ${currency}`;
 }
 
 export function ProjectConfirmCard({
@@ -45,7 +47,9 @@ export function ProjectConfirmCard({
         <dt>End date</dt>
         <dd className="text-foreground">{draft.endDate}</dd>
         <dt>Budget</dt>
-        <dd className="text-foreground">{formatBudget(draft.budget)}</dd>
+        <dd className="text-foreground">
+          {formatBudget(draft.budget, draft.currency)}
+        </dd>
       </dl>
 
       <div className="flex flex-col gap-1 text-xs">

@@ -53,12 +53,14 @@ const ATTENTION_CARDS: {
   label: string;
   icon: typeof FolderKanban;
   activeClassName: string;
+  hoverClassName: string;
 }[] = [
   {
     value: "active",
     label: "Active",
     icon: FolderKanban,
     activeClassName: "border-foreground/30 bg-foreground text-background",
+    hoverClassName: "hover:bg-foreground/90",
   },
   {
     value: "critical",
@@ -66,6 +68,7 @@ const ATTENTION_CARDS: {
     icon: CircleAlert,
     activeClassName:
       "border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/60 dark:text-red-100",
+    hoverClassName: "hover:bg-red-100 dark:hover:bg-red-950/80",
   },
   {
     value: "risk",
@@ -73,6 +76,7 @@ const ATTENTION_CARDS: {
     icon: AlertTriangle,
     activeClassName:
       "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-100",
+    hoverClassName: "hover:bg-amber-100 dark:hover:bg-amber-950/80",
   },
   {
     value: "due30",
@@ -80,6 +84,7 @@ const ATTENTION_CARDS: {
     icon: CalendarClock,
     activeClassName:
       "border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950/60 dark:text-blue-100",
+    hoverClassName: "hover:bg-blue-100 dark:hover:bg-blue-950/80",
   },
 ];
 
@@ -156,8 +161,13 @@ export function PortfolioControls({
                 )
               }
               className={cn(
-                "flex min-h-20 items-center justify-between rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "flex min-h-20 items-center justify-between rounded-lg border bg-card px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                // Hover lightens only when unselected. A selected card carries
+                // its own (sometimes dark) background, so the generic light-gray
+                // hover must not wash over it and hide the text.
+                !selected && "hover:bg-muted/60",
                 selected && card.activeClassName,
+                selected && card.hoverClassName,
               )}
             >
               <span>
@@ -179,8 +189,12 @@ export function PortfolioControls({
         })}
       </div>
 
-      <div className="flex flex-wrap items-end justify-between gap-3 rounded-lg border bg-card px-3 py-2.5">
-        <div className="flex flex-wrap items-end gap-2">
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 rounded-lg border bg-card px-3 py-2.5">
+        <div className="grid gap-1.5">
+          <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-muted-foreground">
+            Filter
+          </span>
+          <div className="flex flex-wrap items-end gap-2">
           <label className="grid gap-1 text-xs font-medium text-muted-foreground">
             Client
             <Select
@@ -262,6 +276,7 @@ export function PortfolioControls({
               Show completed
             </label>
           </div>
+          </div>
         </div>
 
         <div className="flex items-end gap-2">
@@ -288,15 +303,23 @@ export function PortfolioControls({
             </Button>
           ) : null}
           <label className="grid gap-1 text-xs font-medium text-muted-foreground">
-            Sort
+            Sort by
             <Select
               value={sort}
               onValueChange={(value) =>
                 replaceParam("sort", value === "priority" ? null : value)
               }
             >
-              <SelectTrigger className="w-40" aria-label="Sort projects">
-                <SelectValue />
+              <SelectTrigger className="w-44" aria-label="Sort projects by">
+                {/* Static prefix keeps the collapsed control reading as an
+                    ordering ("Sort by: Client"), never a second Client filter.
+                    SelectValue must stay — it is the popover's anchor ref.
+                    Wrapping both in one flex child stops the trigger's
+                    justify-between from flinging the arrow to the far edge. */}
+                <span className="flex items-center gap-1 truncate">
+                  <span className="text-muted-foreground">Sort by:</span>
+                  <SelectValue />
+                </span>
               </SelectTrigger>
               <SelectContent>
                 {SORT_OPTIONS.map((option) => (

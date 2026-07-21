@@ -38,6 +38,14 @@ const CATEGORY_OPTIONS = [
   { value: "agents", label: "Agents" },
 ] as const;
 
+const CURRENCY_OPTIONS = [
+  { value: "USD", label: "USD" },
+  { value: "EUR", label: "EUR" },
+  { value: "CHF", label: "CHF" },
+] as const;
+
+const DEFAULT_CURRENCY = "CHF";
+
 type DeliverableDraft = {
   name: string;
   startDate: string;
@@ -52,6 +60,7 @@ type FormState = {
   ownerId: string;
   progress: number;
   budget: string;
+  currency: string;
   completed: boolean;
   startDate: string;
   endDate: string;
@@ -81,6 +90,7 @@ function defaultState(currentPersonId?: string): FormState {
     ownerId: currentPersonId ?? "",
     progress: 0,
     budget: "",
+    currency: DEFAULT_CURRENCY,
     completed: false,
     startDate: today,
     endDate: today,
@@ -98,6 +108,7 @@ function stateFromProject(project: ProjectWithRelations): FormState {
     ownerId: project.ownerId,
     progress: project.progress,
     budget: project.budget === null ? "" : String(project.budget),
+    currency: project.currency ?? DEFAULT_CURRENCY,
     completed: project.completed,
     startDate: toDateInputValue(project.startDate),
     endDate: toDateInputValue(project.endDate),
@@ -194,6 +205,7 @@ export function DetailsTab({
         project?.members.map((member) => member.personId) ?? [],
       progress: values.progress,
       budget: values.budget.trim() === "" ? null : Number(values.budget),
+      currency: values.currency,
       completed: values.completed,
       startDate: dateOnlyUTC(new Date(values.startDate)),
       endDate: dateOnlyUTC(new Date(values.endDate)),
@@ -601,7 +613,7 @@ export function DetailsTab({
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="project-budget">Budget (CHF)</Label>
+          <Label htmlFor="project-budget">Budget</Label>
           <div className="flex items-center gap-2">
             <Input
               id="project-budget"
@@ -616,7 +628,24 @@ export function DetailsTab({
                 setState((prev) => ({ ...prev, budget: event.target.value }))
               }
             />
-            <span className="text-sm text-muted-foreground">CHF</span>
+            <Select
+              value={state.currency}
+              disabled={formDisabled}
+              onValueChange={(value) =>
+                setState((prev) => ({ ...prev, currency: value }))
+              }
+            >
+              <SelectTrigger aria-label="Currency" className="w-24 shrink-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CURRENCY_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           {errors.budget ? (
             <p className="text-xs text-destructive">{errors.budget}</p>

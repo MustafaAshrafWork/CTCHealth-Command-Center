@@ -23,6 +23,17 @@ import type { AIMessage } from "@/lib/ai/provider";
 const MAX_HISTORY_MESSAGES = 24;
 const MAX_MESSAGE_LENGTH = 2_000;
 
+const PROJECT_TEMPLATE = `Project name:
+Owner:
+Client:
+Category (tech / consultancy / agency / agents):
+Start date:
+End date:
+Budget (number only):
+Currency (USD / EUR / CHF):
+At risk (yes/no + reason):
+Needs help (yes/no + who): `;
+
 type ChatResponse =
   | { ok: true; message: string; draft: ProjectDraft | null }
   | { ok: false; error: string };
@@ -49,12 +60,23 @@ export function ProjectChat() {
   const [confirmPending, setConfirmPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const chatInFlightRef = useRef(false);
   const confirmInFlightRef = useRef(false);
+
+  const busy = chatPending || confirmPending;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, draft, error]);
+
+  // Keep the caret in the input after each assistant turn (and when the sheet
+  // opens) so the user can keep typing without reaching for the mouse.
+  useEffect(() => {
+    if (open && !busy) {
+      inputRef.current?.focus();
+    }
+  }, [open, busy]);
 
   async function sendMessages(nextMessages: AIMessage[]) {
     if (chatInFlightRef.current) {
@@ -156,7 +178,10 @@ export function ProjectChat() {
     setDraft(null);
   }
 
-  const busy = chatPending || confirmPending;
+  function handleUseTemplate() {
+    setInput(PROJECT_TEMPLATE);
+    inputRef.current?.focus();
+  }
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -183,16 +208,26 @@ export function ProjectChat() {
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
           {messages.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              Tell me about the project you want to create — for example,
-              &ldquo;New tech project for Acme, I&rsquo;ll own it.&rdquo;
-            </p>
+            <div className="flex flex-col items-start gap-2">
+              <p className="text-sm text-muted-foreground">
+                Tell me about the project you want to create — for example,
+                &ldquo;New tech project for Acme, I&rsquo;ll own it.&rdquo;
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleUseTemplate}
+              >
+                Use a template
+              </Button>
+            </div>
           )}
           {messages.map((message, index) => (
             <div
               key={index}
               className={cn(
-                "max-w-[85%] rounded-lg px-3 py-2 text-sm",
+                "max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap",
                 message.role === "user"
                   ? "self-end bg-primary text-primary-foreground"
                   : "self-start bg-muted text-foreground",
@@ -231,6 +266,7 @@ export function ProjectChat() {
 
         <div className="flex items-end gap-2 border-t p-3">
           <Textarea
+            ref={inputRef}
             value={input}
             onChange={(event) =>
               setInput(event.target.value.slice(0, MAX_MESSAGE_LENGTH))

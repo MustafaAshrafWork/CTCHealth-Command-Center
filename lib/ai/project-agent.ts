@@ -5,6 +5,7 @@ import { parseStrictISODate } from "../validation";
 import { AIProviderError, type AIMessage, type AIProvider } from "./provider";
 
 const CATEGORY_VALUES = ["tech", "consultancy", "agency", "agents"] as const;
+const CURRENCY_VALUES = ["USD", "EUR", "CHF"] as const;
 
 const SYSTEM_PROMPT_TEMPLATE = `You are the CTCHealth Command Center project-intake assistant for a small local pilot.
 
@@ -13,7 +14,7 @@ CONTEXT
 - Valid project owners are: {{OWNER_NAMES}}.
 - Valid categories are exactly: tech, consultancy, agency, agents.
 - This pilot stores projects in a local database.
-- The pilot stores budget as a numeric amount only; it does not store a currency.
+- The pilot stores a budget amount together with one currency. Valid currencies are exactly: USD, EUR, CHF. If the user does not state a currency, default to CHF.
 - You cannot create, edit, or delete anything. You can only prepare a draft for a separate confirmation step.
 - Do not ask for or suggest SharePoint, Teams, Microsoft 365, credentials, patient data, or sensitive personal data.
 
@@ -25,21 +26,28 @@ Collect these project fields conversationally:
 4. Category
 5. Start date
 6. End date
-7. Budget amount
+7. Budget amount and its currency (USD, EUR, or CHF; default CHF if unspecified)
 
 You must also ask both qualitative questions:
 - “Do you think this project is at risk?” If yes, ask for a short reason.
 - “Do you need help from anyone?” If yes, ask what help and from whom.
 
 CONVERSATION RULES
-- Ask only one to three closely related questions per turn.
+- Do NOT ask for fields one at a time. On every "collecting" turn, briefly acknowledge what the user just gave, then show everything that is still missing as a single bulleted checklist so they can supply it all at once.
+- Format the "message" like this while collecting (use a real newline before each bullet, and "- " as the bullet marker):
+  Here's what's still missing:
+  - Project name
+  - Start date
+  - End date
+  Only list the fields and qualitative answers that are still missing. When only one thing is left, still use the bulleted form.
+- The user may paste a filled-in template with all fields at once; read every line and go straight to a ready draft if nothing is missing.
 - Acknowledge information already supplied; do not ask for it again.
 - Accept natural-language dates, but normalize them to YYYY-MM-DD in the draft.
 - If a date is ambiguous, ask the user to clarify it.
 - The end date must be on or after the start date.
 - The ownerName in a ready draft must exactly match one name from the valid-owner list. If the user gives an ambiguous or unknown owner, ask them to choose.
 - Map category wording to one valid category only when the intent is clear; otherwise list the four choices.
-- Ask for a nonnegative numeric budget. If the user gives a currency, explain briefly that this pilot stores only the numeric amount. Use null only when the user explicitly says the budget is unknown or not set.
+- Ask for a nonnegative numeric budget and its currency. Map the currency to one of USD, EUR, or CHF (e.g. "dollars" -> USD, "euros" -> EUR, "francs"/"CHF" -> CHF). If the user gives an amount with no currency, use CHF. If the user gives a range, use the average. Use a null budget only when the user explicitly says the budget is unknown or not set; even then, still record a currency (default CHF).
 - Do not infer that a project is at risk. Record the user's answer.
 - Do not infer help needs. Record the user's answer.
 - Never claim that a project has been created or saved.
@@ -68,6 +76,7 @@ When every required field and both qualitative answers are complete:
     "startDate": "YYYY-MM-DD",
     "endDate": "YYYY-MM-DD",
     "budget": 0,
+    "currency": "USD | EUR | CHF",
     "atRisk": false,
     "riskDetails": null,
     "needsHelp": false,
@@ -103,6 +112,7 @@ const GEMINI_RESPONSE_SCHEMA: Record<string, unknown> = {
         startDate: { type: "STRING" },
         endDate: { type: "STRING" },
         budget: { type: "NUMBER", nullable: true },
+        currency: { type: "STRING", enum: [...CURRENCY_VALUES] },
         atRisk: { type: "BOOLEAN" },
         riskDetails: { type: "STRING", nullable: true },
         needsHelp: { type: "BOOLEAN" },
@@ -116,6 +126,7 @@ const GEMINI_RESPONSE_SCHEMA: Record<string, unknown> = {
         "startDate",
         "endDate",
         "budget",
+        "currency",
         "atRisk",
         "riskDetails",
         "needsHelp",
@@ -142,6 +153,7 @@ export const projectDraftSchema = z
     startDate: isoDateOnly,
     endDate: isoDateOnly,
     budget: z.number().finite().nonnegative().nullable(),
+    currency: z.enum(CURRENCY_VALUES),
     atRisk: z.boolean(),
     riskDetails: z.string().trim().min(1).nullable(),
     needsHelp: z.boolean(),
@@ -260,6 +272,7 @@ export function buildCreateProjectInput(
     startDate: draft.startDate,
     endDate: draft.endDate,
     budget: draft.budget,
+    currency: draft.currency,
     status: "planning",
     priority: "medium",
     memberIds: [],

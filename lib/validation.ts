@@ -58,6 +58,7 @@ export const projectStatusSchema = z.enum([
   "completed",
 ]);
 export const projectPrioritySchema = z.enum(["high", "medium", "low"]);
+export const projectCurrencySchema = z.enum(["USD", "EUR", "CHF"]);
 export const flagStatusSchema = z.enum(["open", "resolved"]);
 
 const optionalSharePointLink = z
@@ -127,6 +128,7 @@ const projectBaseFields = {
   memberIds: z.array(nonEmptyText),
   progress: z.number().int().min(0).max(100).optional(),
   budget: z.number().finite().nonnegative().nullable().optional(),
+  currency: projectCurrencySchema.default("CHF"),
   completed: z.boolean().optional(),
   startDate: strictCalendarDateSchema,
   endDate: strictCalendarDateSchema,
