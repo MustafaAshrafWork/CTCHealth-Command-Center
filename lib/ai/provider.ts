@@ -20,6 +20,7 @@ export type AIProviderErrorCode =
   | "NOT_CONFIGURED"
   | "TIMEOUT"
   | "UPSTREAM"
+  | "RATE_LIMITED"
   | "INVALID_RESPONSE";
 
 export class AIProviderError extends Error {

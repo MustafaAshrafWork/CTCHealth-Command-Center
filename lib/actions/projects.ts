@@ -330,6 +330,58 @@ export async function updateProject(
   return { ok: true, data: sanitizeProjectResult(updated) };
 }
 
+// Archive a single project directly, without the "must be completed" gate that
+// setArchived applies to its bulk file-away flow. Used by the assistant's
+// delete path: deleting an active project archives it (reversible) instead of
+// hard-deleting, and archiving does not require the project to be completed.
+export async function archiveProject(
+  id: string,
+  version: number,
+): Promise<ActionResult<{ id: string; name: string }>> {
+  const session = await requireSessionResult();
+  if (!session.ok) {
+    return session;
+  }
+
+  const parsedId = idSchema.safeParse(id);
+  if (!parsedId.success) {
+    return { ok: false, code: "VALIDATION", error: "Invalid project id." };
+  }
+  id = parsedId.data;
+
+  const access = await authorizeProjectMutation(id, session);
+  if (!access.ok) {
+    return access;
+  }
+
+  const updateResult = await db.project.updateMany({
+    where: { id, version, ...access.projectWhere },
+    data: {
+      archived: true,
+      version: { increment: 1 },
+      updatedById: session.personId,
+    },
+  });
+
+  if (updateResult.count === 0) {
+    const exists = await db.project.findUnique({
+      where: { id, isDemo: session.isDemo },
+      select: { id: true },
+    });
+    if (exists) {
+      return { ok: false, code: "CONFLICT", error: CONFLICT_MESSAGE };
+    }
+    return { ok: false, code: "NOT_FOUND", error: "Project not found." };
+  }
+
+  revalidateProjectRoutes();
+  const project = await db.project.findUniqueOrThrow({
+    where: { id },
+    select: { id: true, name: true },
+  });
+  return { ok: true, data: project };
+}
+
 export async function setProjectStatus(
   id: string,
   version: number,

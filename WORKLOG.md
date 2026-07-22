@@ -45,3 +45,8 @@
 | 2026-07-19-2001 | lib/project-csv.ts | other | Parse and validate project CSV rows and resolve people names | done |
 | 2026-07-19-2001 | lib/validation.ts | other | Reuse exported project enum schemas across create and import validation | done |
 | 2026-07-19-2001 | lib/__tests__/project-csv.test.ts | other | Cover CSV quoting, row validation, and people resolution | done |
+| 2026-07-21-1334 | lib/ai/project-agent.ts | other | AI companion: action envelope (answer/create/edit/delete) + project context builder | done |
+| 2026-07-21-1334 | app/api/chat/route.ts | other | Load project context for AI; confirm-edit + confirm-delete write paths | done |
+| 2026-07-21-1334 | components/chat/project-chat.tsx | other | Pending-action state; dispatch create/edit/delete confirms; broadened copy | done |
+| 2026-07-21-1334 | components/chat/project-confirm-card.tsx | other | Add ProjectEditCard + ProjectDeleteCard | done |
+| 2026-07-21-1334 | lib/__tests__/project-agent.test.ts | other | Migrate tests to action envelope; add answer/edit/delete/context tests | done |

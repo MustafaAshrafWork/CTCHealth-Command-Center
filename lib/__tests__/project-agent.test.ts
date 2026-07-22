@@ -35,31 +35,35 @@ async function runWith(body: unknown) {
     messages: [{ role: "user", content: "hi" }],
     ownerNames: OWNER_NAMES,
     today: TODAY,
+    projects: [],
   });
 }
 
 describe("runProjectAgent", () => {
-  it("returns a null draft for a collecting envelope", async () => {
+  it("returns just a message for an answer envelope", async () => {
     const result = await runWith({
       message: "What's the project name?",
-      status: "collecting",
+      action: "answer",
+      targetProjectId: null,
       draft: null,
     });
 
     expect(result).toEqual({
+      action: "answer",
       message: "What's the project name?",
-      draft: null,
     });
   });
 
-  it("returns the full draft for a complete ready envelope", async () => {
+  it("returns the full draft for a complete create envelope", async () => {
     const result = await runWith({
       message: "Review and confirm.",
-      status: "ready",
+      action: "create",
+      targetProjectId: null,
       draft: validDraft,
     });
 
     expect(result).toEqual({
+      action: "create",
       message: "Review and confirm.",
       draft: validDraft,
     });
@@ -69,7 +73,8 @@ describe("runProjectAgent", () => {
     await expect(
       runWith({
         message: "Review and confirm.",
-        status: "ready",
+        action: "create",
+        targetProjectId: null,
         draft: { ...validDraft, startDate: "2026-09-02", endDate: "2026-09-01" },
       }),
     ).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
@@ -81,7 +86,8 @@ describe("runProjectAgent", () => {
       await expect(
         runWith({
           message: "Review and confirm.",
-          status: "ready",
+          action: "create",
+        targetProjectId: null,
           draft: { ...validDraft, startDate: invalidDate },
         }),
       ).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
@@ -89,7 +95,8 @@ describe("runProjectAgent", () => {
       await expect(
         runWith({
           message: "Review and confirm.",
-          status: "ready",
+          action: "create",
+        targetProjectId: null,
           draft: { ...validDraft, endDate: invalidDate },
         }),
       ).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
@@ -99,19 +106,25 @@ describe("runProjectAgent", () => {
   it("accepts a valid leap-day date", async () => {
     const result = await runWith({
       message: "Review and confirm.",
-      status: "ready",
+      action: "create",
+        targetProjectId: null,
       draft: { ...validDraft, startDate: "2028-02-29", endDate: "2028-02-29" },
     });
 
-    expect(result.draft?.startDate).toBe("2028-02-29");
-    expect(result.draft?.endDate).toBe("2028-02-29");
+    expect(result.action).toBe("create");
+    if (result.action !== "create") {
+      throw new Error("expected a create draft");
+    }
+    expect(result.draft.startDate).toBe("2028-02-29");
+    expect(result.draft.endDate).toBe("2028-02-29");
   });
 
   it("rejects an owner name outside the valid list", async () => {
     await expect(
       runWith({
         message: "Review and confirm.",
-        status: "ready",
+        action: "create",
+        targetProjectId: null,
         draft: { ...validDraft, ownerName: "Someone Unlisted" },
       }),
     ).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
@@ -121,7 +134,8 @@ describe("runProjectAgent", () => {
     await expect(
       runWith({
         message: "Review and confirm.",
-        status: "ready",
+        action: "create",
+        targetProjectId: null,
         draft: { ...validDraft, category: "marketing" },
       }),
     ).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
@@ -131,7 +145,8 @@ describe("runProjectAgent", () => {
     await expect(
       runWith({
         message: "Review and confirm.",
-        status: "ready",
+        action: "create",
+        targetProjectId: null,
         draft: { ...validDraft, atRisk: true, riskDetails: null },
       }),
     ).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
@@ -141,7 +156,8 @@ describe("runProjectAgent", () => {
     await expect(
       runWith({
         message: "Review and confirm.",
-        status: "ready",
+        action: "create",
+        targetProjectId: null,
         draft: { ...validDraft, needsHelp: true, helpDetails: null },
       }),
     ).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
@@ -153,8 +169,106 @@ describe("runProjectAgent", () => {
         messages: [{ role: "user", content: "hi" }],
         ownerNames: OWNER_NAMES,
         today: TODAY,
+        projects: [],
       }),
     ).rejects.toBeInstanceOf(AIProviderError);
+  });
+
+  it("rejects an edit that targets a project not in context", async () => {
+    await expect(
+      runWith({
+        action: "edit",
+        message: "Updating.",
+        targetProjectId: "does-not-exist",
+        draft: validDraft,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+  });
+});
+
+describe("runProjectAgent with project context", () => {
+  const SAMPLE = {
+    id: "proj-1",
+    name: "Ejada Webinar",
+    client: "Ejada",
+    category: "consultancy",
+    status: "planning",
+    ownerName: "Jane Doe",
+    memberNames: ["Sam"],
+    startDate: "2026-07-21",
+    endDate: "2026-07-28",
+    budget: 9000,
+    currency: "CHF",
+    progress: 0,
+    archived: false,
+    completed: false,
+    notes: "Initial project intake",
+  };
+
+  function runWithProjects(body: unknown) {
+    return runProjectAgent(stubProvider(envelope(body)), {
+      messages: [{ role: "user", content: "hi" }],
+      ownerNames: OWNER_NAMES,
+      today: TODAY,
+      projects: [SAMPLE],
+    });
+  }
+
+  it("returns an answer turn for a read question", async () => {
+    const result = await runWithProjects({
+      action: "answer",
+      message: "You have 1 project: Ejada Webinar.",
+      targetProjectId: null,
+      draft: null,
+    });
+    expect(result).toEqual({
+      action: "answer",
+      message: "You have 1 project: Ejada Webinar.",
+    });
+  });
+
+  it("returns an edit turn for a known project", async () => {
+    const result = await runWithProjects({
+      action: "edit",
+      message: "Review the changes.",
+      targetProjectId: "proj-1",
+      draft: validDraft,
+    });
+    expect(result).toEqual({
+      action: "edit",
+      message: "Review the changes.",
+      targetProjectId: "proj-1",
+      draft: validDraft,
+    });
+  });
+
+  it("returns a delete turn for a known project", async () => {
+    const result = await runWithProjects({
+      action: "delete",
+      message: "Confirm to delete.",
+      targetProjectId: "proj-1",
+      draft: null,
+    });
+    expect(result).toEqual({
+      action: "delete",
+      message: "Confirm to delete.",
+      targetProjectId: "proj-1",
+    });
+  });
+
+  it("returns a suggest-idea turn for an unsupported request", async () => {
+    const result = await runWithProjects({
+      action: "suggest-idea",
+      message: "I can't do that, but I can log it as an idea.",
+      idea: "Add a dark mode to the dashboard.",
+      targetProjectId: null,
+      draft: null,
+    });
+    expect(result).toEqual({
+      action: "suggest-idea",
+      message: "I can't do that, but I can log it as an idea.",
+      idea: "Add a dark mode to the dashboard.",
+    });
   });
 });
 

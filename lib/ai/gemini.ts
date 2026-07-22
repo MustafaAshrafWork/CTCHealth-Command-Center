@@ -80,6 +80,13 @@ export class GeminiProvider implements AIProvider {
       );
     }
 
+    if (response.status === 429) {
+      throw new AIProviderError(
+        "RATE_LIMITED",
+        "The AI assistant is rate limited right now (free-tier quota). Please wait a minute and try again.",
+      );
+    }
+
     if (!response.ok) {
       throw new AIProviderError(
         "UPSTREAM",

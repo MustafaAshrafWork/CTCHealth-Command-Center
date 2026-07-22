@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Copy, KeyRound, LogOut, UserPlus } from "lucide-react";
+import { Copy, KeyRound, Lightbulb, LogOut, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 import { createPerson, logout } from "@/lib/actions/people";
@@ -206,6 +207,14 @@ export function Topbar({
       </div>
 
       <div className="flex shrink-0 items-center gap-3">
+        <Button asChild variant="outline" size="sm" className="gap-2">
+          <Link href="/ideas">
+            <Lightbulb data-icon="inline-start" />
+            <span className="hidden sm:inline">Submit your ideas</span>
+            <span className="sr-only sm:hidden">Submit your ideas</span>
+          </Link>
+        </Button>
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
